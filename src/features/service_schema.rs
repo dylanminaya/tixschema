@@ -34,10 +34,20 @@
 //!   factory that binds one.
 //! - `ts_service()`: the interface an implementation satisfies in full, the outcome types it
 //!   answers with, and the dispatcher factory.
+//! - `ts_ws_client()`: the `ws_rpc` transport seam — a socket seam a platform `WebSocket` satisfies
+//!   as it is, the heartbeat options, the per-operation schema tables a reply is checked against,
+//!   and the factory that binds one to the `ts_client()` seam.
+//! - `ts_ws_service()`: the `ws_rpc` dispatcher attachment — reads every notify and request frame
+//!   naming this service off the socket seam `ts_ws_client()` publishes, drives the dispatcher
+//!   `ts_service()` publishes, and hands a refused notify's fault to a required `onFault`. A
+//!   bundle names `ts_ws_client()` before this, so the socket type it attaches to is declared.
 //! - `dart_http_client()`: the Dart sibling of `ts_http_client()` — the same `http_rest` seam and
 //!   per-operation client, in Dart, over the `dart` feature's own types and codec rather than Zod,
 //!   and throwing on failure rather than returning a result union (published only where the `dart`
 //!   feature is on).
+//! - `dart_ws_client()`: the Dart `ws_rpc` sibling — a transport over a sink and a stream, the
+//!   per-operation client, and a dispatcher attachment for a service the app implements (published
+//!   only where the `dart` feature is on).
 //!
 //! # The client and the dispatcher exist only where the Zod surface does
 //!
@@ -83,6 +93,8 @@
 mod client;
 #[cfg(feature = "dart")]
 mod dart_http_client;
+#[cfg(feature = "dart")]
+mod dart_ws_client;
 mod fault;
 #[cfg(feature = "zod")]
 mod http_client;
@@ -91,6 +103,10 @@ mod message;
 mod result;
 #[cfg(feature = "zod")]
 mod service;
+#[cfg(feature = "zod")]
+mod ws_client;
+#[cfg(feature = "zod")]
+mod ws_service;
 
 use crate::service_schema::parse::ServiceDef;
 use crate::service_schema::support::{fault_fields_typescript_name, module_ident};
@@ -122,18 +138,27 @@ pub fn emit(service: &ServiceDef) -> TokenStream {
     }
 }
 
-/// The service's generated Dart `http_rest` client: the transport seam, the exceptions a call
-/// throws, the client class, and the fault helpers every method reaches for — published only where
-/// the `dart` feature publishes the Dart types and codec this client's messages, successes and
-/// errors are written in.
+/// The service's generated Dart clients: the `http_rest` transport seam, the exceptions a call
+/// throws, the client class, and the fault helpers every method reaches for; and the `ws_rpc`
+/// transport over a sink and a stream, its own client and exceptions, and a dispatcher attachment
+/// for a service the app implements — published only where the `dart` feature publishes the Dart
+/// types and codec this client's messages, successes and errors are written in.
 #[cfg(feature = "dart")]
 fn dart_seam(service: &ServiceDef) -> TokenStream {
     let client = dart_http_client::emit(service).join("\n\n");
+    let ws_client = dart_ws_client::emit(service).join("\n\n");
     quote! {
         #[doc = " The service's generated Dart `http_rest` client: the transport seam, the"]
         #[doc = " exceptions a call throws, and the client class."]
         pub fn dart_http_client() -> String {
             #client.to_owned()
+        }
+
+        #[doc = " The service's generated Dart `ws_rpc` client: the transport over a sink and a"]
+        #[doc = " stream, the client class, the exceptions a call throws, and the dispatcher"]
+        #[doc = " attachment."]
+        pub fn dart_ws_client() -> String {
+            #ws_client.to_owned()
         }
     }
 }
@@ -153,6 +178,8 @@ fn seam(service: &ServiceDef) -> TokenStream {
     let client = client::emit(service).join("\n\n");
     let http_client = http_client::emit(service).join("\n\n");
     let service_side = service::emit(service).join("\n\n");
+    let ws_client = ws_client::emit(service).join("\n\n");
+    let ws_service = ws_service::emit(service).join("\n\n");
     quote! {
         #[doc = " The service's generated TypeScript client: the transport seam it is bound"]
         #[doc = " to, the type its methods are declared on, and the factory that binds one."]
@@ -170,6 +197,20 @@ fn seam(service: &ServiceDef) -> TokenStream {
         #[doc = " implementation answers with, and the dispatcher factory that drives one."]
         pub fn ts_service() -> String {
             #service_side.to_owned()
+        }
+
+        #[doc = " The service's generated `ws_rpc` TypeScript transport: the socket seam a platform"]
+        #[doc = " `WebSocket` satisfies, the heartbeat options, and the factory that binds one to"]
+        #[doc = " the `ts_client()` seam."]
+        pub fn ts_ws_client() -> String {
+            #ws_client.to_owned()
+        }
+
+        #[doc = " The service's generated `ws_rpc` dispatcher attachment: serves a service the"]
+        #[doc = " browser implements off one socket, handing a refused push to the required"]
+        #[doc = " `onFault`."]
+        pub fn ts_ws_service() -> String {
+            #ws_service.to_owned()
         }
     }
 }
@@ -250,12 +291,13 @@ fn seam_rustdoc(service: &str) -> Vec<String> {
         String::new(),
         format!(
             " This build publishes no `{service}Schema::ts_client()`, no \
-             `{service}Schema::ts_http_client()`, and no `{service}Schema::ts_service()`. All \
-             three parse a message against the schema `#[model_schema()]` writes for it, and only \
-             a build with tixschema's `zod` feature writes one — so rather than a client and a \
-             dispatcher that check nothing, this build publishes the service's types and leaves \
-             the three seam artifacts out. Add `features = [\"zod\"]` to the tixschema dependency \
-             to get them."
+             `{service}Schema::ts_http_client()`, no `{service}Schema::ts_service()`, no \
+             `{service}Schema::ts_ws_client()`, and no `{service}Schema::ts_ws_service()`. All \
+             five parse a message against the schema `#[model_schema()]` writes for it, and only \
+             a build with tixschema's `zod` feature writes one — so rather than a client, a \
+             transport and a dispatcher that check nothing, this build publishes the service's \
+             types and leaves the five seam artifacts out. Add `features = [\"zod\"]` to the \
+             tixschema dependency to get them."
         ),
     ]
 }
