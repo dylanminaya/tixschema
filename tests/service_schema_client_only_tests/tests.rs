@@ -69,6 +69,14 @@ pub struct GetVersionRequest {
 }
 
 #[model_schema()]
+#[derive(Deserialize, Serialize)]
+pub struct ReadWindowRequest {
+    pub document_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_version: Option<String>,
+}
+
+#[model_schema()]
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct VersionResponse {
     pub content: String,
@@ -137,6 +145,17 @@ pub trait DocumentClientService<Ctx> {
 
     #[service_schema_op(one_way, http(method = "DELETE", path = "/documents/{document_id}"))]
     async fn purge_document(&self, ctx: &Ctx, document_id: String);
+
+    #[service_schema_op(http(
+        method = "GET",
+        path = "/documents/{document_id}/window",
+        error_status(NotFound = 404, VersionGone = 410),
+    ))]
+    async fn read_window(
+        &self,
+        ctx: &Ctx,
+        req: ReadWindowRequest,
+    ) -> Result<VersionResponse, GetVersionError>;
 }
 
 /// A backend answering the contract, with no dispatcher in sight: the trait is the contract, and a
@@ -241,6 +260,17 @@ impl DocumentClientService<()> for DocumentClientBackEnd {
 
     async fn purge_document(&self, _ctx: &(), _document_id: String) {
         ready(()).await;
+    }
+
+    async fn read_window(
+        &self,
+        _ctx: &(),
+        req: ReadWindowRequest,
+    ) -> Result<VersionResponse, GetVersionError> {
+        ready(()).await;
+        Ok(VersionResponse {
+            content: req.document_id,
+        })
     }
 }
 
@@ -656,6 +686,48 @@ fn a_no_payload_operation_resolves_on_its_declared_status_without_reading_a_body
     assert_eq!(client.transport().requests()[0].path, "/documents/d1");
 }
 
+#[test]
+fn a_lone_placeholder_on_an_author_s_own_message_sends_the_field_it_names() {
+    let transport =
+        RecordingTransport::queued(vec![(200, Vec::new(), br#"{"content":"d1"}"#.to_vec())]);
+    let client = http_rest_client::DocumentClientServiceClient::new(transport);
+    let answered = poll_once(client.read_window(ReadWindowRequest {
+        document_id: "d1".to_owned(),
+        from_version: Some("v1".to_owned()),
+    }))
+    .unwrap();
+    assert_eq!(
+        answered,
+        Ok(VersionResponse {
+            content: "d1".to_owned()
+        })
+    );
+    assert_eq!(
+        client.transport().requests()[0].path,
+        "/documents/d1/window"
+    );
+}
+
+#[test]
+fn a_lone_placeholder_leaves_the_rest_of_the_message_in_the_query() {
+    let transport =
+        RecordingTransport::queued(vec![(200, Vec::new(), br#"{"content":"d1"}"#.to_vec())]);
+    let client = http_rest_client::DocumentClientServiceClient::new(transport);
+    poll_once(client.read_window(ReadWindowRequest {
+        document_id: "d1".to_owned(),
+        from_version: Some("v1".to_owned()),
+    }))
+    .unwrap()
+    .unwrap();
+    let sent = &client.transport().requests()[0];
+    assert_eq!(sent.path, "/documents/d1/window");
+    assert_eq!(
+        sent.query, "from_version=v1",
+        "`from_version` is bound to no placeholder, so the only place left for it is the query \
+         string; an empty query drops the field the caller passed. Got: {sent:?}"
+    );
+}
+
 /// A `body = "bytes"` operation reads the response body bare, the `content-type` header back into
 /// the tuple's second element, and its declared `header_out` entry back into the third - no
 /// `serde_json` decode anywhere on the success path.
@@ -769,5 +841,18 @@ fn the_document_contract_is_implementable_where_no_dispatcher_was_placed() {
             "image/png".to_owned(),
             "doc-d1".to_owned()
         ))
+    );
+    assert_eq!(
+        poll_once(DocumentClientBackEnd.read_window(
+            &(),
+            ReadWindowRequest {
+                document_id: "d1".to_owned(),
+                from_version: None,
+            }
+        ))
+        .unwrap(),
+        Ok(VersionResponse {
+            content: "d1".to_owned()
+        })
     );
 }

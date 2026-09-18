@@ -253,6 +253,28 @@ const MULTIPART_HTTP_SERVICE: &str = "
     }
 ";
 
+#[cfg(feature = "zod")]
+const SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
+    pub trait ConversationClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/conversations/{conversation_id}/window\",
+            error_status(NotFound = 404),
+        ))]
+        async fn window(
+            &self,
+            ctx: &Ctx,
+            req: WindowRequest,
+        ) -> Result<WindowPage, WindowError>;
+
+        #[service_schema_op(one_way, http(
+            method = \"DELETE\",
+            path = \"/conversations/{conversation_id}\",
+        ))]
+        async fn purge_conversation(&self, ctx: &Ctx, conversation_id: String);
+    }
+";
+
 /// A service declaring one `body = "bytes"` operation composing `header_out` onto its own tuple:
 /// the bytes, their content type, then the declared header. Dart-gated mirror of
 /// `BYTES_HTTP_SERVICE`, since a build can carry `dart` without `zod`.
@@ -327,6 +349,28 @@ const DART_MULTIPART_HTTP_SERVICE: &str = "
             description: Option<String>,
             attachment: Box<dyn upload_client_service_schema::BodySource + Send>,
         ) -> Result<UploadResponse, UploadError>;
+    }
+";
+
+#[cfg(feature = "dart")]
+const DART_SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
+    pub trait ConversationClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/conversations/{conversation_id}/window\",
+            error_status(NotFound = 404),
+        ))]
+        async fn window(
+            &self,
+            ctx: &Ctx,
+            req: WindowRequest,
+        ) -> Result<WindowPage, WindowError>;
+
+        #[service_schema_op(one_way, http(
+            method = \"DELETE\",
+            path = \"/conversations/{conversation_id}\",
+        ))]
+        async fn purge_conversation(&self, ctx: &Ctx, conversation_id: String);
     }
 ";
 

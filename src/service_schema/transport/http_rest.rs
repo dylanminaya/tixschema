@@ -577,20 +577,21 @@ fn query_parsing_helpers() -> TokenStream {
     }
 }
 
-/// Whether `operation` reads at least one query parameter: a bodyless method with a generated
-/// field the path left unbound. Read identically by the dispatcher (to decide whether
+/// Whether `operation` reads at least one query parameter: a bodyless method carrying a field the
+/// path left unbound. Read identically by the dispatcher (to decide whether
 /// [`query_parsing_helpers`] is reachable) and the client (to decide whether it ever builds one).
 fn has_query_fields(operation: &OperationDef, shape: &HttpShape) -> bool {
     if shape.method.carries_a_body() {
         return false;
     }
-    let OperationInputs::Generated(fields) = &operation.inputs else {
-        return false;
-    };
     let placeholders = shape.placeholder_names();
-    fields
-        .iter()
-        .any(|(field, _)| !placeholders.contains(&field.to_string()))
+    match &operation.inputs {
+        OperationInputs::Empty => false,
+        OperationInputs::Generated(fields) => fields
+            .iter()
+            .any(|(field, _)| !placeholders.contains(&field.to_string())),
+        OperationInputs::Named(declared) => !is_scalar_named_type(declared),
+    }
 }
 
 fn path_token_tokens(path: &[PathSegment]) -> Vec<TokenStream> {
@@ -1851,9 +1852,8 @@ fn client_method(
 }
 
 /// The client's own placeholder value: a Generated field is read off `sending` by name; a Named
-/// message with several placeholders is read the same way, under the same documented requirement
-/// that its fields are visible under those names; a Named message answering to exactly one
-/// placeholder *is* the value.
+/// message's field is read the same way; a Named message that is itself a wire scalar *is* the
+/// value.
 fn client_placeholder_value(operation: &OperationDef, placeholder: &str) -> TokenStream {
     match &operation.inputs {
         // A path placeholder on an `Empty` input is refused at parse time - there is no field for
@@ -1863,9 +1863,9 @@ fn client_placeholder_value(operation: &OperationDef, placeholder: &str) -> Toke
             let ident = format_ident!("{placeholder}");
             quote! { sending.#ident }
         }
-        OperationInputs::Named(_) => {
+        OperationInputs::Named(declared) => {
             let shape = HttpShape::of(operation);
-            if shape.placeholder_names().len() == 1 {
+            if shape.placeholder_names().len() == 1 && is_scalar_named_type(declared) {
                 quote! { sending }
             } else {
                 let ident = format_ident!("{placeholder}");
@@ -1895,12 +1895,12 @@ fn path_build_stmts(operation: &OperationDef, shape: &HttpShape) -> TokenStream 
 }
 
 fn query_build_stmts(operation: &OperationDef, shape: &HttpShape) -> TokenStream {
-    let OperationInputs::Generated(fields) = &operation.inputs else {
-        return quote! { let query = String::new(); };
-    };
     if shape.method.carries_a_body() {
         return quote! { let query = String::new(); };
     }
+    let OperationInputs::Generated(fields) = &operation.inputs else {
+        return named_query_build_stmts(operation, shape);
+    };
     let placeholders = shape.placeholder_names();
     let field_pushes: Vec<TokenStream> = fields
         .iter()
@@ -1946,6 +1946,46 @@ fn query_build_stmts(operation: &OperationDef, shape: &HttpShape) -> TokenStream
         let query = {
             let mut query_parts: Vec<String> = ::std::vec::Vec::new();
             #pushes
+            query_parts.join("&")
+        };
+    }
+}
+
+/// The query string a bodyless method carrying an author's own message builds: every key the path
+/// did not spend. This macro cannot name that type's fields, so the emitted client walks the
+/// message serde wrote instead, as the TypeScript and Dart clients do.
+fn named_query_build_stmts(operation: &OperationDef, shape: &HttpShape) -> TokenStream {
+    let OperationInputs::Named(declared) = &operation.inputs else {
+        return quote! { let query = String::new(); };
+    };
+    if is_scalar_named_type(declared) {
+        return quote! { let query = String::new(); };
+    }
+    let bound: Vec<String> = shape.placeholder_names().into_iter().collect();
+    quote! {
+        let query = {
+            let mut query_parts: Vec<String> = ::std::vec::Vec::new();
+            let path_bound: &[&str] = &[#(#bound),*];
+            if let Ok(::serde_json::Value::Object(written)) = ::serde_json::to_value(&sending) {
+                for (key, value) in &written {
+                    if path_bound.contains(&key.as_str()) || value.is_null() {
+                        continue;
+                    }
+                    let rendered = match value {
+                        ::serde_json::Value::Array(elements) => elements
+                            .iter()
+                            .map(|element| match element {
+                                ::serde_json::Value::String(text) => text.clone(),
+                                other => other.to_string(),
+                            })
+                            .collect::<Vec<String>>()
+                            .join(","),
+                        ::serde_json::Value::String(text) => text.clone(),
+                        other => other.to_string(),
+                    };
+                    query_parts.push(format!("{}={}", key, percent_encoded(&rendered)));
+                }
+            }
             query_parts.join("&")
         };
     }

@@ -61,7 +61,7 @@ use crate::field_type::{FieldDefType, get_field_def};
 use crate::rename_rule::RenameRule;
 use crate::service_schema::parse::{
     BodyKind, DEFAULT_BINDING_ERROR_STATUS, HttpShape, OperationDef, OperationInputs,
-    OperationOutcome, PathSegment, ServiceDef, is_unit_type, option_inner,
+    OperationOutcome, PathSegment, ServiceDef, is_scalar_named_type, is_unit_type, option_inner,
     service_declares_a_stream, service_declares_multipart, tuple_elements, vec_inner, wire_key,
 };
 use crate::service_schema::support::fault_fields_typescript_name;
@@ -333,10 +333,8 @@ fn method(
 // Building the request from the validated message.
 // ---------------------------------------------------------------------------------------------
 
-/// The value one path placeholder reads off `req`: one of its own fields under its own written
-/// spelling for a generated or a multi-placeholder named message, or the whole message where a
-/// named message answers to exactly one placeholder — mirrors the Rust and TypeScript clients'
-/// own `client_placeholder_value`/`placeholder_value_expr`.
+/// The value one path placeholder reads off `req`: the field the placeholder names, or the whole
+/// message where that message is itself a wire scalar.
 fn placeholder_value_dart_expr(
     operation: &OperationDef,
     shape: &HttpShape,
@@ -352,7 +350,7 @@ fn placeholder_value_dart_expr(
                 |(_, ty)| dart_wire_text(ty, &format!("req.{placeholder}"), false),
             ),
         OperationInputs::Named(declared) => {
-            if shape.placeholder_names().len() == 1 {
+            if shape.placeholder_names().len() == 1 && is_scalar_named_type(declared) {
                 dart_wire_text(declared, "req", true)
             } else {
                 format!("'${{req.{placeholder}}}'")
@@ -377,16 +375,43 @@ fn path_build_stmt(operation: &OperationDef, shape: &HttpShape) -> String {
     stmt
 }
 
-/// The query string a bodyless method's own unbound fields build — only a `Generated` message
-/// carries query fields, mirroring the Rust and TypeScript clients: every field a bodyless
-/// `Named` message carries has to be exposed through a path placeholder instead.
+fn named_query_build_stmt(shape: &HttpShape) -> String {
+    let bound = shape
+        .placeholder_names()
+        .iter()
+        .map(|name| format!("'{name}'"))
+        .collect::<Vec<String>>()
+        .join(", ");
+    format!(
+        "    final queryParts = <String>[];\n    \
+         req.toJson().forEach((key, value) {{\n      \
+         if (const <String>[{bound}].contains(key) || value == null) {{\n        \
+         return;\n      \
+         }}\n      \
+         final rendered = value is List\n          \
+         ? value.map((element) => '$element').join(',')\n          \
+         : '$value';\n      \
+         queryParts.add('$key=${{Uri.encodeComponent(rendered)}}');\n    \
+         }});\n    \
+         final query = queryParts.join('&');\n"
+    )
+}
+
 fn query_build_stmt(operation: &OperationDef, shape: &HttpShape) -> String {
-    let OperationInputs::Generated(fields) = &operation.inputs else {
-        return "    const query = '';\n".to_owned();
-    };
     if shape.method.carries_a_body() {
         return "    const query = '';\n".to_owned();
     }
+    let fields = match &operation.inputs {
+        OperationInputs::Empty => return "    const query = '';\n".to_owned(),
+        OperationInputs::Named(declared) => {
+            return if is_scalar_named_type(declared) {
+                "    const query = '';\n".to_owned()
+            } else {
+                named_query_build_stmt(shape)
+            };
+        }
+        OperationInputs::Generated(fields) => fields,
+    };
     let placeholders = shape.placeholder_names();
     let mut pushes = String::new();
     for (field, ty) in fields {
