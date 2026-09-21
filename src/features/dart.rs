@@ -193,7 +193,7 @@ fn has_serde_transparent(attrs: &[syn::Attribute]) -> bool {
 /// alias the way an impl target is, so it is the one spelling every shape (struct, enum, branded
 /// newtype, or alias) can publish `dart_definition()` under safely and uniformly.
 fn dart_module_tokens(rust_ident: &str, span: proc_macro2::Span, dart_source: &str) -> TokenStream {
-    let module_ident = Ident::new(&format!("{}_dart", to_snake_case(rust_ident)), span);
+    let module_ident = dart_module_ident(rust_ident, span);
     quote! {
         pub mod #module_ident {
             pub fn dart_definition() -> String {
@@ -201,6 +201,13 @@ fn dart_module_tokens(rust_ident: &str, span: proc_macro2::Span, dart_source: &s
             }
         }
     }
+}
+
+/// The `{ident}_dart` module ident an item's own `dart_definition()` publishes from — read back
+/// rather than re-derived by anything naming that module for an item it did not itself declare (a
+/// service registry naming a message's or a fault type's own Dart module, for instance).
+pub fn dart_module_ident(rust_ident: &str, span: proc_macro2::Span) -> Ident {
+    Ident::new(&format!("{}_dart", to_snake_case(rust_ident)), span)
 }
 
 /// The `typedef {rust_ident}{generics} = {export_name}{generics};` a renamed item re-publishes
