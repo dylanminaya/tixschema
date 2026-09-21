@@ -59,8 +59,8 @@ export function conversationClientServiceHttpDefaultFaultHandler(fault: Conversa
   return conversationClientServiceHttpJson(status, [], fault);
 }
 
-function conversationClientServiceHttpFault(kind: ConversationClientServiceFaultFields[\"kind\"], operation: string, detail: string): ConversationClientServiceFault {
-  const built: ConversationClientServiceFaultFields = { detail, field: undefined, kind, operation };
+function conversationClientServiceHttpFault(kind: ConversationClientServiceFaultFields[\"kind\"], operation: string, detail: string, field?: string): ConversationClientServiceFault {
+  const built: ConversationClientServiceFaultFields = { detail, field, kind, operation };
   return built as ConversationClientServiceFault;
 }
 
@@ -375,8 +375,9 @@ fn a_multipart_operation_reads_its_fields_off_parts_and_checks_a_bound_part_for_
     );
     assert!(
         written.contains("if (!request.parts.some(([name]) => name === \"file\")) {")
-            && written.contains("\"a required multipart part was not carried\""),
-        "a `part(...)` binding is checked for presence, mirroring the Rust refusal. Got: {written}"
+            && written.contains("\"a required multipart part was not carried\", \"file\""),
+        "a `part(...)` binding is checked for presence, mirroring the Rust refusal, and names \
+         the part in `field`. Got: {written}"
     );
     assert!(
         !written.contains("attachment"),
