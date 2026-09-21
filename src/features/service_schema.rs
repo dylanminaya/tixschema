@@ -59,6 +59,10 @@
 //! - `dart_ws_client()`: the Dart `ws_rpc` sibling — a transport over a sink and a stream, the
 //!   per-operation client answering the same sealed pair as `dart_http_client()`, and a dispatcher
 //!   attachment for a service the app implements (published only where the `dart` feature is on).
+//! - `kotlin_http_client()`: the Kotlin sibling of `dart_http_client()` — request/response data
+//!   classes, the transport seam, one sealed result per reply operation, and a `suspend`-method-
+//!   per-operation client, over the `kotlin` feature's own types and codec (published only where
+//!   the `kotlin` feature is on).
 //!
 //! # The client and the dispatcher exist only where the Zod surface does
 //!
@@ -113,6 +117,8 @@ mod fault;
 mod http_client;
 #[cfg(feature = "zod")]
 mod http_service;
+#[cfg(feature = "kotlin")]
+mod kotlin_http_client;
 #[cfg(feature = "zod")]
 mod message;
 mod result;
@@ -137,6 +143,7 @@ pub fn emit(service: &ServiceDef, non_exhaustive: bool) -> TokenStream {
     let published = published(service);
     let seam = seam(service);
     let dart_seam = dart_seam(service);
+    let kotlin_seam = kotlin_seam(service);
     let sealed = exhaustiveness(non_exhaustive);
     quote! {
         #(#[doc = #rustdoc])*
@@ -153,6 +160,7 @@ pub fn emit(service: &ServiceDef, non_exhaustive: bool) -> TokenStream {
 
             #seam
             #dart_seam
+            #kotlin_seam
         }
     }
 }
@@ -192,6 +200,28 @@ fn dart_seam(service: &ServiceDef) -> TokenStream {
 
 #[cfg(not(feature = "dart"))]
 fn dart_seam(_service: &ServiceDef) -> TokenStream {
+    TokenStream::new()
+}
+
+/// The service's generated Kotlin `http_rest` client: request/response data classes, a transport
+/// seam the hosting application implements, one sealed result per reply operation, and a
+/// `suspend`-method-per-operation client — published only where the `kotlin` feature publishes the
+/// Kotlin types and codec this client's messages, successes and errors are written in.
+#[cfg(feature = "kotlin")]
+fn kotlin_seam(service: &ServiceDef) -> TokenStream {
+    let client = kotlin_http_client::emit(service).join("\n\n");
+    quote! {
+        #[doc = " The service's generated Kotlin `http_rest` client: request/response data"]
+        #[doc = " classes, the transport seam, one sealed result per reply operation, and the"]
+        #[doc = " client class with one `suspend` method per operation."]
+        pub fn kotlin_http_client() -> String {
+            #client.to_owned()
+        }
+    }
+}
+
+#[cfg(not(feature = "kotlin"))]
+fn kotlin_seam(_service: &ServiceDef) -> TokenStream {
     TokenStream::new()
 }
 

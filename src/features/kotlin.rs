@@ -13,6 +13,7 @@
 //! regardless of declaration order just as Dart does.
 
 use core::cell::{Cell, RefCell};
+use core::iter::once;
 use std::collections::HashMap;
 
 use proc_macro2::TokenStream;
@@ -34,10 +35,11 @@ use crate::utils::{
 use crate::features::serde::{parse_serde_field_attributes, parse_serde_type_attributes};
 
 /// One field this module has decided belongs on the wire: its Rust name (camel-cased into the
-/// Kotlin property spelling by [`kotlin_property_name`]), its wire name, and the [`FieldDef`]
-/// describing its type.
+/// Kotlin property spelling by [`kotlin_property_name`]), its wire name, whether it is a
+/// `#[serde(flatten)]` source, and the [`FieldDef`] describing its type.
 struct KotlinField {
     field_def: FieldDef,
+    flatten: bool,
     rust_name: String,
     wire_name: String,
 }
@@ -60,6 +62,31 @@ enum VariantPayload {
     Named(Vec<KotlinField>),
     Unit,
     Value(Box<FieldDef>),
+}
+
+/// What [`flatten_plan`] builds from a struct's fields: one `serialize_stmts` entry per field
+/// (own or flattened), one `deserialize_stmts` entry per field (own reads and flattened-struct
+/// `descriptor`-key reads interleaved, in field order, the map field's own read appended last so
+/// it can name every other field's own keys), and the constructor argument list in field order.
+struct FlattenPlan {
+    ctor_args: Vec<String>,
+    deserialize_stmts: Vec<String>,
+    needs_lenient: bool,
+    serialize_stmts: Vec<String>,
+}
+
+/// Everything [`dispatched_tagged_variant`] needs that stays the same across every variant of one
+/// enum, read once by [`dispatched_tagged_enum_kotlin_source`] and passed through — so the loop
+/// over variants is the only thing that changes per call.
+struct DispatchedTaggedContext<'ctx> {
+    content_key: Option<&'ctx str>,
+    export_name: &'ctx str,
+    field_rule: RenameRule,
+    generic_params: &'ctx str,
+    nothing_generic_args: &'ctx str,
+    tag_key: &'ctx str,
+    type_parameters: &'ctx [String],
+    variant_rule: RenameRule,
 }
 
 thread_local! {
@@ -95,8 +122,8 @@ pub fn kotlin_schema_dispatch(item: &Item, name_override: Option<&str>) -> Token
 
 /// The `u64`/`usize` width `field` is, or at any depth reaches — a `SiblingType`'s own generic
 /// arguments, a `Map`'s key and value, a `Tuple`'s elements — or `None` for a field with no such
-/// width anywhere. Kotlin's widest unsigned width is `UInt`; `u64` and `usize` have no counterpart
-/// at all, the same refusal the Swift target makes for the same reason.
+/// width anywhere. Kotlin has a `ULong` that could carry `u64`; the refusal exists instead for
+/// parity with the Swift target, which refuses the same two widths.
 pub fn kotlin_refused_width(field: &FieldDef) -> Option<&'static str> {
     match &field.field_type {
         FieldDefType::U64 => Some("u64"),
@@ -215,6 +242,18 @@ const fn rename_override(_attrs: &[syn::Attribute]) -> Option<String> {
     None
 }
 
+/// Whether `attrs` carries `#[serde(flatten)]` — always `false` without the `serde` feature, since
+/// no field can carry an attribute the container itself never reads.
+#[cfg(feature = "serde")]
+fn field_is_flatten(attrs: &[syn::Attribute]) -> bool {
+    parse_serde_field_attributes(attrs).flatten
+}
+
+#[cfg(not(feature = "serde"))]
+const fn field_is_flatten(_attrs: &[syn::Attribute]) -> bool {
+    false
+}
+
 /// The wire name a field with Rust name `rust_name` and its own `rename` writes under, once
 /// `rule` — the container's own `rename_all`, [`RenameRule::None`] without the `serde` feature —
 /// has had its say. An explicit rename always wins over the container's rule, matching serde.
@@ -317,6 +356,7 @@ fn collect_kotlin_fields(
         }
         collected.push(KotlinField {
             field_def,
+            flatten: field_is_flatten(&field.attrs),
             rust_name,
             wire_name,
         });
@@ -527,6 +567,35 @@ fn kotlin_generic_params(generics: &syn::Generics) -> String {
     }
 }
 
+/// `<out T, out U>` for a sealed base's own declaration — never for a use site, where Kotlin
+/// refuses a variance annotation. Covariant so a unit variant's `data object` may implement the
+/// base at [`kotlin_nothing_generic_args`] regardless of what fills `T`.
+fn kotlin_out_generic_params(generics: &syn::Generics) -> String {
+    let parameters = type_parameters_in_scope(generics);
+    if parameters.is_empty() {
+        String::new()
+    } else {
+        let out = parameters
+            .iter()
+            .map(|parameter| format!("out {parameter}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("<{out}>")
+    }
+}
+
+/// `<Nothing, Nothing>` for the type parameters `generics` declares, or the empty string for none —
+/// the filling a unit variant's `data object` implements the sealed base at, one `Nothing` per
+/// parameter, since the object binds none of its own.
+fn kotlin_nothing_generic_args(generics: &syn::Generics) -> String {
+    let parameters = type_parameters_in_scope(generics);
+    if parameters.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", vec!["Nothing"; parameters.len()].join(", "))
+    }
+}
+
 /// One property declaration inside a constructor's parameter list: `@SerialName("...")` only where
 /// the wire spelling differs from the Kotlin property, then `val name: Type`, then `= null` for a
 /// field whose key may be absent — a bare `Option<T>` without `#[model_schema_prop(nullable)]`.
@@ -555,8 +624,187 @@ fn data_class_params(fields: &[KotlinField]) -> String {
         .join(", ")
 }
 
+/// `field`'s own type with any outer `Option` stripped — what a flatten field's inner type is,
+/// read for its plain serializer and descriptor regardless of whether the field itself is
+/// `Option<...>`. [`FieldDefType::Map`]'s key and value are untouched: a flatten field never wraps
+/// its own map in one more collection level.
+fn flatten_base_field(field_def: &FieldDef) -> FieldDef {
+    let mut base = field_def.clone();
+    base.nullable_levels.clear();
+    base
+}
+
+/// One non-flattened field's own `serialize`/`deserialize` statements and constructor argument —
+/// the branch [`flatten_plan`] takes for every field that is not itself `#[serde(flatten)]`.
+fn own_field_plan(field: &KotlinField, prop: &str) -> (String, String, String) {
+    let field_serializer = kotlin_serializer_expr(&field.field_def);
+    let serialize = format!(
+        "put(\"{}\", output.json.encodeToJsonElement({field_serializer}, value.{prop}))",
+        field.wire_name
+    );
+    let decode_expr = if field.field_def.is_optional() {
+        format!(
+            "obj[\"{}\"]?.let {{ input.json.decodeFromJsonElement({field_serializer}, it) }}",
+            field.wire_name
+        )
+    } else {
+        format!(
+            "input.json.decodeFromJsonElement({field_serializer}, obj.getValue(\"{}\"))",
+            field.wire_name
+        )
+    };
+    (
+        serialize,
+        format!("val {prop} = {decode_expr}"),
+        field.wire_name.clone(),
+    )
+}
+
+/// One flattened *struct* (or `Option<Struct>`) field's own statements: the `serialize` merge, the
+/// `deserialize` read (leniently, off the whole object — `null` when an optional field's own keys
+/// are all absent), and the `elementNames` read every later map field needs to know these keys are
+/// already spoken for.
+fn flatten_struct_field_plan(field: &KotlinField, prop: &str) -> (String, String, String) {
+    let base = flatten_base_field(&field.field_def);
+    let inner_serializer = kotlin_serializer_expr(&base);
+    let serialize = if field.field_def.is_optional() {
+        format!(
+            "value.{prop}?.let {{ flattened -> output.json.encodeToJsonElement({inner_serializer}, flattened).jsonObject.forEach {{ (k, v) -> put(k, v) }} }}"
+        )
+    } else {
+        format!(
+            "output.json.encodeToJsonElement({inner_serializer}, value.{prop}).jsonObject.forEach {{ (k, v) -> put(k, v) }}"
+        )
+    };
+    let keys_ident = format!("{prop}Keys");
+    let key_read =
+        format!("val {keys_ident} = ({inner_serializer}).descriptor.elementNames.toSet()");
+    let decode = if field.field_def.is_optional() {
+        format!(
+            "val {prop} = if (obj.keys.any {{ it in {keys_ident} }}) lenient.decodeFromJsonElement({inner_serializer}, obj) else null"
+        )
+    } else {
+        format!("val {prop} = lenient.decodeFromJsonElement({inner_serializer}, obj)")
+    };
+    (serialize, format!("{key_read}; {decode}"), keys_ident)
+}
+
+/// The flattened map field's own statements, once every other field's own keys are known: the
+/// `serialize` merge and the `deserialize` read, over whatever keys `consumed_keys` leaves.
+fn flatten_map_field_plan(
+    prop: &str,
+    value_serializer: &str,
+    consumed_keys: &str,
+) -> (String, String) {
+    let serialize = format!(
+        "value.{prop}.forEach {{ (k, v) -> put(k, output.json.encodeToJsonElement({value_serializer}, v)) }}"
+    );
+    let decode = format!(
+        "val {prop}ConsumedKeys = {consumed_keys}; \
+         val {prop} = obj.filterKeys {{ it !in {prop}ConsumedKeys }}.mapValues {{ (_, v) -> input.json.decodeFromJsonElement({value_serializer}, v) }}"
+    );
+    (serialize, decode)
+}
+
+fn flatten_plan(fields: &[KotlinField]) -> FlattenPlan {
+    let mut plan = FlattenPlan {
+        ctor_args: Vec::new(),
+        deserialize_stmts: Vec::new(),
+        needs_lenient: false,
+        serialize_stmts: Vec::new(),
+    };
+    let mut own_wire_keys = Vec::new();
+    let mut struct_key_idents = Vec::new();
+    let mut map_field: Option<(&KotlinField, String)> = None;
+
+    for field in fields {
+        let prop = kotlin_property_name(&field.rust_name);
+        if !field.flatten {
+            let (serialize, decode, wire_key) = own_field_plan(field, &prop);
+            plan.serialize_stmts.push(serialize);
+            plan.deserialize_stmts.push(decode);
+            own_wire_keys.push(wire_key);
+        } else if let FieldDefType::Map(_, map_value) = &field.field_def.field_type {
+            map_field = Some((field, kotlin_serializer_expr(map_value)));
+            continue;
+        } else {
+            plan.needs_lenient = true;
+            let (serialize, decode, keys_ident) = flatten_struct_field_plan(field, &prop);
+            plan.serialize_stmts.push(serialize);
+            plan.deserialize_stmts.push(decode);
+            struct_key_idents.push(keys_ident);
+        }
+        plan.ctor_args.push(format!("{prop} = {prop}"));
+    }
+
+    if let Some((field, value_serializer)) = map_field {
+        let prop = kotlin_property_name(&field.rust_name);
+        let own_literal = format!(
+            "setOf({})",
+            own_wire_keys
+                .iter()
+                .map(|key| format!("\"{key}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let consumed_keys = once(own_literal)
+            .chain(struct_key_idents)
+            .collect::<Vec<_>>()
+            .join(" + ");
+        let (serialize, decode) = flatten_map_field_plan(&prop, &value_serializer, &consumed_keys);
+        plan.serialize_stmts.push(serialize);
+        plan.deserialize_stmts.push(decode);
+        plan.ctor_args.push(format!("{prop} = {prop}"));
+    }
+
+    plan
+}
+
+/// The generated `KSerializer` a struct with one or more `#[serde(flatten)]` fields earns, since
+/// `kotlinx.serialization` has no annotation for flatten: `serialize` merges each
+/// flattened value's own `JsonObject` entries into the enclosing object; `deserialize` decodes each
+/// flattened struct from the whole object, tolerant of the other fields' own keys, decodes a
+/// flattened map from whatever keys are left once every other field has claimed its own, and reads
+/// the struct's own fields off their own wire keys. A flattened `Option<T>` decodes `null` when
+/// none of `T`'s own keys — read off its serializer's descriptor — is present.
+fn flatten_merging_serializer(
+    export_name: &str,
+    generic_params: &str,
+    fields: &[KotlinField],
+) -> String {
+    let serializer_name = format!("{export_name}Serializer");
+    let self_type = format!("{export_name}{generic_params}");
+    let plan = flatten_plan(fields);
+
+    let lenient_field = if plan.needs_lenient {
+        "private val lenient = Json { ignoreUnknownKeys = true }; "
+    } else {
+        ""
+    };
+    let serialize_body = format!(
+        "override fun serialize(encoder: Encoder, value: {self_type}) {{ \
+         val output = encoder as JsonEncoder; \
+         output.encodeJsonElement(buildJsonObject {{ {} }}) }}",
+        plan.serialize_stmts.join("; ")
+    );
+    let deserialize_body = format!(
+        "override fun deserialize(decoder: Decoder): {self_type} {{ \
+         val input = decoder as JsonDecoder; val obj = input.decodeJsonElement().jsonObject; {}; \
+         return {export_name}({}) }}",
+        plan.deserialize_stmts.join("; "),
+        plan.ctor_args.join(", "),
+    );
+    format!(
+        "object {serializer_name} : KSerializer<{self_type}> {{ \
+         override val descriptor: SerialDescriptor = buildClassSerialDescriptor(\"{export_name}\"); \
+         {lenient_field}{serialize_body}; {deserialize_body} }}"
+    )
+}
+
 /// The Kotlin tokens a named-field struct earns: a `data class`, plus a `typealias` under its own
-/// Rust ident when `name = "..."` moved its published name elsewhere.
+/// Rust ident when `name = "..."` moved its published name elsewhere. A struct carrying one or more
+/// `#[serde(flatten)]` fields also earns a generated merging [`KSerializer`](flatten_merging_serializer),
+/// since `kotlinx.serialization` cannot flatten by annotation.
 fn struct_kotlin_tokens(item_struct: &ItemStruct, name_override: Option<&str>) -> TokenStream {
     let type_parameters = type_parameters_in_scope(&item_struct.generics);
     if has_serde_transparent(&item_struct.attrs) && is_single_slot(&item_struct.fields) {
@@ -588,7 +836,12 @@ fn struct_kotlin_tokens(item_struct: &ItemStruct, name_override: Option<&str>) -
             data_class_params(&fields)
         )
     };
-    let kotlin_source = format!("@Serializable {body}{alias}");
+    let kotlin_source = if fields.iter().any(|field| field.flatten) {
+        let serializer = flatten_merging_serializer(&export_name, &generic_params, &fields);
+        format!("@Serializable(with = {export_name}Serializer::class) {body} {serializer}{alias}")
+    } else {
+        format!("@Serializable {body}{alias}")
+    };
 
     kotlin_module_tokens(&rust_ident, item_struct.ident.span(), &kotlin_source)
 }
@@ -794,6 +1047,7 @@ fn variant_subclass(
     export_name: &str,
     subclass_name: &str,
     generic_params: &str,
+    nothing_generic_args: &str,
     serial_name: Option<&str>,
     bare_value: bool,
     payload: &VariantPayload,
@@ -803,7 +1057,7 @@ fn variant_subclass(
     match payload {
         VariantPayload::Unit => {
             format!(
-                "{annotation}@Serializable data object {subclass_name} : {export_name}{generic_params}"
+                "{annotation}@Serializable data object {subclass_name} : {export_name}{nothing_generic_args}"
             )
         }
         VariantPayload::Named(fields) => {
@@ -814,13 +1068,13 @@ fn variant_subclass(
         }
         VariantPayload::Value(field_def) if bare_value => {
             format!(
-                "{annotation}@JvmInline @Serializable value class {subclass_name}(val value: {}) : {export_name}{generic_params}",
+                "{annotation}@JvmInline @Serializable value class {subclass_name}{generic_params}(val value: {}) : {export_name}{generic_params}",
                 kotlin_typename(field_def)
             )
         }
         VariantPayload::Value(field_def) => {
             format!(
-                "{annotation}@Serializable data class {subclass_name}(val value: {}) : {export_name}{generic_params}",
+                "{annotation}@Serializable data class {subclass_name}{generic_params}(val value: {}) : {export_name}{generic_params}",
                 kotlin_typename(field_def)
             )
         }
@@ -842,6 +1096,7 @@ fn internal_tagged_enum_kotlin_source(
     let field_rule = resolve_rename_rule(tag_attrs.rename_all_fields.as_deref());
     let type_parameters = type_parameters_in_scope(&item_enum.generics);
     let generic_params = kotlin_generic_params(&item_enum.generics);
+    let nothing_generic_args = kotlin_nothing_generic_args(&item_enum.generics);
 
     let subclasses: Vec<String> = item_enum
         .variants
@@ -856,6 +1111,7 @@ fn internal_tagged_enum_kotlin_source(
                 export_name,
                 &subclass_name,
                 &generic_params,
+                &nothing_generic_args,
                 Some(&wire_tag),
                 false,
                 &payload,
@@ -865,9 +1121,81 @@ fn internal_tagged_enum_kotlin_source(
 
     let base = format!(
         "@OptIn(ExperimentalSerializationApi::class) @Serializable @JsonClassDiscriminator(\"{tag_key}\") \
-         sealed interface {export_name}{generic_params}"
+         sealed interface {export_name}{}",
+        kotlin_out_generic_params(&item_enum.generics)
     );
     format!("{base} {}", subclasses.join(" "))
+}
+
+/// One variant's own subclass, `serialize` arm and `deserialize` arm, for
+/// [`dispatched_tagged_enum_kotlin_source`] — pulled out of that function's own loop to keep it
+/// under this crate's line budget per function.
+fn dispatched_tagged_variant(
+    variant: &Variant,
+    ctx: &DispatchedTaggedContext<'_>,
+) -> (String, String, String) {
+    let variant_rust_name = variant.ident.to_string();
+    let wire_tag = rename_override(&variant.attrs)
+        .unwrap_or_else(|| ctx.variant_rule.apply_to_variant(&variant_rust_name));
+    let subclass_name = format!("{}{variant_rust_name}", ctx.export_name);
+    let payload = variant_payload(variant, ctx.field_rule, ctx.type_parameters);
+    let subclass = variant_subclass(
+        ctx.export_name,
+        &subclass_name,
+        ctx.generic_params,
+        ctx.nothing_generic_args,
+        None,
+        false,
+        &payload,
+    );
+
+    let content_expr = match &payload {
+        VariantPayload::Unit => None,
+        VariantPayload::Named(_) => Some(format!(
+            "output.json.encodeToJsonElement(serializer<{subclass_name}>(), value)"
+        )),
+        VariantPayload::Value(field_def) => Some(format!(
+            "output.json.encodeToJsonElement({}, value.value)",
+            kotlin_serializer_expr(field_def)
+        )),
+    };
+    // Adjacent tagging reads its content out of a `Map` index, which is nullable in Kotlin;
+    // external tagging destructures the object's one entry, already non-null. Only a Unit
+    // payload's own arm never forces it, since a Unit variant carries no content key at all.
+    let data_ref = if ctx.content_key.is_some() {
+        "data!!"
+    } else {
+        "data"
+    };
+    let decode_expr = match &payload {
+        VariantPayload::Unit => subclass_name.clone(),
+        VariantPayload::Named(_) => {
+            format!("input.json.decodeFromJsonElement(serializer<{subclass_name}>(), {data_ref})")
+        }
+        VariantPayload::Value(field_def) => format!(
+            "{subclass_name}(input.json.decodeFromJsonElement({}, {data_ref}))",
+            kotlin_serializer_expr(field_def)
+        ),
+    };
+
+    let tag_key = ctx.tag_key;
+    let serialize_arm = match (&ctx.content_key, &content_expr) {
+        (Some(content), Some(expr)) => format!(
+            "is {subclass_name} -> buildJsonObject {{ put(\"{tag_key}\", \"{wire_tag}\"); put(\"{content}\", {expr}) }}"
+        ),
+        (None, Some(expr)) => {
+            format!("is {subclass_name} -> buildJsonObject {{ put(\"{wire_tag}\", {expr}) }}")
+        }
+        (Some(_), None) => {
+            format!(
+                "is {subclass_name} -> buildJsonObject {{ put(\"{tag_key}\", \"{wire_tag}\") }}"
+            )
+        }
+        (None, None) => format!("is {subclass_name} -> JsonPrimitive(\"{wire_tag}\")"),
+    };
+    let deserialize_arm = format!("\"{wire_tag}\" -> {decode_expr}");
+
+    (subclass, serialize_arm, deserialize_arm)
 }
 
 /// The Kotlin tokens an adjacently-tagged (`tag = "...", content = "..."`) or externally-tagged
@@ -883,74 +1211,34 @@ fn dispatched_tagged_enum_kotlin_source(
     let field_rule = resolve_rename_rule(tag_attrs.rename_all_fields.as_deref());
     let type_parameters = type_parameters_in_scope(&item_enum.generics);
     let generic_params = kotlin_generic_params(&item_enum.generics);
+    let nothing_generic_args = kotlin_nothing_generic_args(&item_enum.generics);
     let content_key = tag_attrs.content.as_deref();
+    let tag_key = tag_attrs.tag.as_deref().unwrap_or("type");
 
-    let mut subclasses = Vec::new();
-    let mut serialize_arms = Vec::new();
-    let mut deserialize_arms = Vec::new();
-    for variant in &item_enum.variants {
-        let variant_rust_name = variant.ident.to_string();
-        let wire_tag = rename_override(&variant.attrs)
-            .unwrap_or_else(|| variant_rule.apply_to_variant(&variant_rust_name));
-        let subclass_name = format!("{export_name}{variant_rust_name}");
-        let payload = variant_payload(variant, field_rule, &type_parameters);
-        subclasses.push(variant_subclass(
-            export_name,
-            &subclass_name,
-            &generic_params,
-            None,
-            false,
-            &payload,
-        ));
-
-        let content_expr = match &payload {
-            VariantPayload::Unit => None,
-            VariantPayload::Named(_) => Some(format!(
-                "output.json.encodeToJsonElement(serializer<{subclass_name}>(), value)"
-            )),
-            VariantPayload::Value(field_def) => Some(format!(
-                "output.json.encodeToJsonElement({}, value.value)",
-                kotlin_serializer_expr(field_def)
-            )),
-        };
-        // Adjacent tagging reads its content out of a `Map` index, which is nullable in Kotlin;
-        // external tagging destructures the object's one entry, already non-null. Only a Unit
-        // payload's own arm never forces it, since a Unit variant carries no content key at all.
-        let data_ref = if content_key.is_some() {
-            "data!!"
-        } else {
-            "data"
-        };
-        let decode_expr = match &payload {
-            VariantPayload::Unit => subclass_name.clone(),
-            VariantPayload::Named(_) => {
-                format!(
-                    "input.json.decodeFromJsonElement(serializer<{subclass_name}>(), {data_ref})"
-                )
-            }
-            VariantPayload::Value(field_def) => format!(
-                "{subclass_name}(input.json.decodeFromJsonElement({}, {data_ref}))",
-                kotlin_serializer_expr(field_def)
-            ),
-        };
-
-        serialize_arms.push(match (&content_key, &content_expr) {
-            (Some(content), Some(expr)) => format!(
-                "is {subclass_name} -> buildJsonObject {{ put(\"{}\", \"{wire_tag}\"); put(\"{content}\", {expr}) }}",
-                tag_attrs.tag.as_deref().unwrap_or("type"),
-            ),
-            (None, Some(expr)) => {
-                format!("is {subclass_name} -> buildJsonObject {{ put(\"{wire_tag}\", {expr}) }}")
-            }
-            (Some(_), None) => format!(
-                "is {subclass_name} -> buildJsonObject {{ put(\"{}\", \"{wire_tag}\") }}",
-                tag_attrs.tag.as_deref().unwrap_or("type"),
-            ),
-            (None, None) => format!("is {subclass_name} -> JsonPrimitive(\"{wire_tag}\")"),
-        });
-
-        deserialize_arms.push(format!("\"{wire_tag}\" -> {decode_expr}"));
-    }
+    let ctx = DispatchedTaggedContext {
+        content_key,
+        export_name,
+        field_rule,
+        generic_params: &generic_params,
+        nothing_generic_args: &nothing_generic_args,
+        tag_key,
+        type_parameters: &type_parameters,
+        variant_rule,
+    };
+    let (subclasses, serialize_arms, deserialize_arms): (Vec<_>, Vec<_>, Vec<_>) = item_enum
+        .variants
+        .iter()
+        .map(|variant| dispatched_tagged_variant(variant, &ctx))
+        .fold(
+            (Vec::new(), Vec::new(), Vec::new()),
+            |(mut subclasses, mut serializes, mut deserializes),
+             (subclass, serialize, deserialize)| {
+                subclasses.push(subclass);
+                serializes.push(serialize);
+                deserializes.push(deserialize);
+                (subclasses, serializes, deserializes)
+            },
+        );
 
     let deserialize_body = content_key.map_or_else(
         || {
@@ -968,13 +1256,15 @@ fn dispatched_tagged_enum_kotlin_source(
                  val data = obj[\"{content}\"]; \
                  return when (tag) {{ {} else -> error(\"unknown tag \" + tag) }}",
                 deserialize_arms.join("; "),
-                tag_key = tag_attrs.tag.as_deref().unwrap_or("type"),
             )
         },
     );
 
     let serializer_name = format!("{export_name}Serializer");
-    let base = format!("sealed interface {export_name}{generic_params}");
+    let base = format!(
+        "sealed interface {export_name}{}",
+        kotlin_out_generic_params(&item_enum.generics)
+    );
     let serializer_object = format!(
         "object {serializer_name} : KSerializer<{export_name}{generic_params}> {{ \
          override val descriptor: SerialDescriptor = buildClassSerialDescriptor(\"{export_name}\"); \
@@ -1001,6 +1291,7 @@ fn untagged_enum_kotlin_source(
     let field_rule = resolve_rename_rule(tag_attrs.rename_all_fields.as_deref());
     let type_parameters = type_parameters_in_scope(&item_enum.generics);
     let generic_params = kotlin_generic_params(&item_enum.generics);
+    let nothing_generic_args = kotlin_nothing_generic_args(&item_enum.generics);
 
     let mut subclasses = Vec::new();
     let mut serialize_arms = Vec::new();
@@ -1014,6 +1305,7 @@ fn untagged_enum_kotlin_source(
             export_name,
             &subclass_name,
             &generic_params,
+            &nothing_generic_args,
             None,
             bare_value,
             &payload,
@@ -1027,7 +1319,10 @@ fn untagged_enum_kotlin_source(
     }
 
     let serializer_name = format!("{export_name}Serializer");
-    let base = format!("sealed interface {export_name}{generic_params}");
+    let base = format!(
+        "sealed interface {export_name}{}",
+        kotlin_out_generic_params(&item_enum.generics)
+    );
     let serializer_object = format!(
         "object {serializer_name} : KSerializer<{export_name}{generic_params}> {{ \
          override val descriptor: SerialDescriptor = buildClassSerialDescriptor(\"{export_name}\"); \
