@@ -74,7 +74,7 @@ fn module() -> String {
 
 /// The requests the driver recorded, or `None` where no runtime was reachable.
 fn sent() -> Option<Vec<serde_json::Value>> {
-    let wrote = ran("dart", RUNTIME_VAR, "dart", "client.dart", &module())?;
+    let wrote = ran("dart", RUNTIME_VAR, "dart", "client.dart", &module(), &[])?;
     Some(serde_json::from_str(wrote.trim()).unwrap())
 }
 
