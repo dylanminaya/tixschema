@@ -7,15 +7,30 @@ use std::env::temp_dir;
 use std::fs;
 use std::io::Write as _;
 use std::io::stderr;
-use std::path::PathBuf;
+use std::os::unix::fs::symlink;
+use std::path::{Path, PathBuf};
 use std::process::{Command, id};
 use std::sync::Mutex;
 
 /// The process id alone does not separate two tests running beside each other.
 static RUNS: AtomicU32 = AtomicU32::new(0);
 
-/// The runtimes already reported absent: once per runtime, so two silent groups are not one.
+/// The keys already reported absent: once per key, so two silent groups are not one.
 static STOOD_DOWN: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+
+/// A directory whose `node_modules` holds the packages a run imports; symlinked into the
+/// workspace by [`ran_with_modules`], since Node's ESM resolver does not consult `NODE_PATH`.
+pub const NODE_MODULES_VAR: &str = "TIXSCHEMA_NODE_MODULES";
+
+/// `None` unless every package in `required` has a directory under `TIXSCHEMA_NODE_MODULES`'s own
+/// `node_modules`.
+pub fn node_modules(required: &[&str]) -> Option<PathBuf> {
+    let at = PathBuf::from(env::var(NODE_MODULES_VAR).ok()?).join("node_modules");
+    required
+        .iter()
+        .all(|package| at.join(package).is_dir())
+        .then_some(at)
+}
 
 /// A directory of its own per run.
 fn workspace(named: &str) -> PathBuf {
@@ -28,23 +43,22 @@ fn workspace(named: &str) -> PathBuf {
     at
 }
 
-/// Writes `entry` into a workspace of its own, runs it under the named runtime, and answers what
-/// the process wrote to stdout.
+/// Writes `entry` into `at`, runs it under the named runtime, and answers what the process wrote
+/// to stdout.
 ///
 /// `None` says no runtime was reachable and nothing ran — never that a run passed. A runtime named
 /// explicitly in `var` that cannot be started is a failure instead.
-pub fn ran(
-    named: &str,
+fn run_in(
     var: &str,
     fallback: &'static str,
     entry: &str,
     source: &str,
+    at: &Path,
 ) -> Option<String> {
     let chosen = env::var(var).ok();
     let runtime = chosen.clone().unwrap_or_else(|| fallback.to_owned());
-    let at = workspace(named);
     fs::write(at.join(entry), source).unwrap();
-    let run = Command::new(&runtime).arg(entry).current_dir(&at).output();
+    let run = Command::new(&runtime).arg(entry).current_dir(at).output();
     let Ok(reported) = run else {
         assert!(
             chosen.is_none(),
@@ -52,10 +66,10 @@ pub fn ran(
             run.unwrap_err()
         );
         stand_down(var, fallback);
-        fs::remove_dir_all(&at).unwrap();
+        fs::remove_dir_all(at).unwrap();
         return None;
     };
-    fs::remove_dir_all(&at).unwrap();
+    fs::remove_dir_all(at).unwrap();
     assert!(
         reported.status.success(),
         "`{runtime} {entry}` failed.\n--- stdout ---\n{}\n--- stderr ---\n{}\n--- source ---\n{source}",
@@ -65,24 +79,72 @@ pub fn ran(
     Some(String::from_utf8_lossy(&reported.stdout).into_owned())
 }
 
-/// Said on the process's own stderr, which `cargo test` does not capture, so a run that proved
-/// nothing says so on the terminal.
-fn stand_down(var: &str, fallback: &'static str) {
+/// Writes `entry` into a workspace of its own and runs it under the named runtime. See [`run_in`].
+pub fn ran(
+    named: &str,
+    var: &str,
+    fallback: &'static str,
+    entry: &str,
+    source: &str,
+) -> Option<String> {
+    let at = workspace(named);
+    run_in(var, fallback, entry, source, &at)
+}
+
+/// Like [`ran`], but first symlinks `<workspace>/node_modules` to `modules` (as returned by
+/// [`node_modules`]) so the entry's ESM imports resolve — Node's ESM resolver ignores `NODE_PATH`.
+pub fn ran_with_modules(
+    named: &str,
+    var: &str,
+    fallback: &'static str,
+    entry: &str,
+    source: &str,
+    modules: &Path,
+) -> Option<String> {
+    let at = workspace(named);
+    symlink(modules, at.join("node_modules")).unwrap();
+    run_in(var, fallback, entry, source, &at)
+}
+
+/// Says `notice` on the process's own stderr, which `cargo test` does not capture — but only the
+/// first time for a given `key`, so two silent groups sharing one reason are not reported twice.
+fn once(key: &'static str, notice: &str) {
     let already = {
         let mut said = STOOD_DOWN.lock().unwrap();
-        let seen = said.contains(&fallback);
+        let seen = said.contains(&key);
         if !seen {
-            said.push(fallback);
+            said.push(key);
         }
         seen
     };
-    if already {
-        return;
+    if !already {
+        drop(stderr().write_all(notice.as_bytes()));
     }
-    let notice = format!(
-        "\ntixschema: no `{fallback}` is reachable, so the emitted client was NOT run.\n  That \
-         group stood down. Put `{fallback}` on PATH, or name one in {var}, and run `just \
-         test-emitted`, which refuses to stand down.\n\n"
+}
+
+/// Said when no runtime named by `var`, nor `fallback` on `PATH`, could be started.
+fn stand_down(var: &str, fallback: &'static str) {
+    once(
+        fallback,
+        &format!(
+            "\ntixschema: no `{fallback}` is reachable, so the emitted client was NOT run.\n  \
+             That group stood down. Put `{fallback}` on PATH, or name one in {var}, and run \
+             `just test-emitted`, which refuses to stand down.\n\n"
+        ),
     );
-    drop(stderr().write_all(notice.as_bytes()));
+}
+
+/// Said when [`node_modules`] found no directory holding every package in `required`, naming the
+/// `surface` that stood down (e.g. "the emitted WebSocket server").
+pub fn stand_down_modules(required: &[&str], surface: &str) {
+    let packages = required.join(", ");
+    once(
+        NODE_MODULES_VAR,
+        &format!(
+            "\ntixschema: no `{packages}` package is reachable through {NODE_MODULES_VAR}, so \
+             {surface} was NOT run.\n  That group stood down. Set {NODE_MODULES_VAR} to a \
+             directory whose `node_modules` holds {packages}, and run `just test-emitted`, which \
+             refuses to stand down.\n\n"
+        ),
+    );
 }
