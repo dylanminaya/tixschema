@@ -1,6 +1,8 @@
-//! The emitted Swift client run under a Swift toolchain: the task 30 codec rows round-tripped
-//! through the emitted `Codable` text, the `http_rest` client's own URLs (the same three
-//! `run_dart.rs` asserts), and the `ws_rpc` client's own scenarios against an in-memory socket.
+//! The emitted Swift client run under a Swift toolchain: the codec rows the Swift spike proved —
+//! renamed and optional fields, the tagged and untagged enum forms, a tuple, a generic struct,
+//! non-string map keys — round-tripped through the emitted `Codable` text, the `http_rest`
+//! client's own URLs (the same three `run_dart.rs` asserts), and the `ws_rpc` client's own
+//! scenarios against an in-memory socket.
 //!
 //! Every group runs `swift main.swift` in immediate mode — no package manifest, Foundation only —
 //! standing down exactly as [`super::run_dart`] does where no Swift toolchain is reachable.
@@ -199,7 +201,7 @@ fn client_module(driver: &str) -> String {
 }
 
 // -------------------------------------------------------------------------------------------
-// Group 1: the task 30 codec rows, decoded from the JSON Rust wrote and re-encoded.
+// Group 1: the codec rows the Swift spike proved, decoded from the JSON Rust wrote and re-encoded.
 // -------------------------------------------------------------------------------------------
 
 /// One row: the name it prints under, the Swift type it decodes into, and the JSON Rust wrote
@@ -320,7 +322,7 @@ fn codec_module(driver: &str) -> String {
 }
 
 #[test]
-fn every_task_30_row_round_trips_through_codable() {
+fn every_codec_row_round_trips_through_codable() {
     let rows = codec_rows();
     let driver = codec_driver(&rows);
     let Some(written) = ran(

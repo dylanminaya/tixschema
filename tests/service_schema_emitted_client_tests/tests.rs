@@ -2,9 +2,10 @@
 //! is the author's own struct, bound to a path with one placeholder, carrying one field the path
 //! does not bind.
 
-/// The Swift codec spike's own rows (task 30), declared once so `run_swift.rs` can round-trip
-/// each through the emitted `swift_definition()` text and this file's own `serde_json` writes the
-/// same JSON against.
+/// The codec rows the Swift spike proved — renamed and optional fields, the tagged and untagged
+/// enum forms, a tuple, a generic struct, non-string map keys — declared once so `run_swift.rs`
+/// can round-trip each through the emitted `swift_definition()` text and this file's own
+/// `serde_json` writes the same JSON against.
 #[cfg(feature = "swift")]
 pub mod swift_codec_fixture {
     use serde::{Deserialize, Serialize};
