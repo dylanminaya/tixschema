@@ -177,6 +177,16 @@ export type Status =
   | "active"
   | "inactive"
   | "pending";
+
+/** The Rust variant name `value` carries, or "" where it carries none. */
+export function Status$Variant(value: unknown): string {
+  switch (value) {
+    case "active": return "Active";
+    case "inactive": return "Inactive";
+    case "pending": return "Pending";
+    default: return "";
+  }
+}
 ```"#]
 ///
 /// `Status::zod_schema()`:
@@ -304,6 +314,16 @@ export type Event = {
    */
   user_id: string;
 };
+
+/** The Rust variant name `value` carries, or "" where it carries none. */
+export function Event$Variant(value: unknown): string {
+  if (typeof value !== "object" || value === null) return "";
+  switch ((value as { type?: unknown }).type) {
+    case "userCreated": return "UserCreated";
+    case "userDeleted": return "UserDeleted";
+    default: return "";
+  }
+}
 ```"#]
 ///
 /// `Event::zod_schema()`:

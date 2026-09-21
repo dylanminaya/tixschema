@@ -401,6 +401,20 @@ fn test_tuple_single_union_typescript() {
     );
 }
 
+/// An untagged enum puts no variant name anywhere in the value, so its reader has nothing to read:
+/// the body is `return "";` for every input.
+#[test]
+#[cfg(feature = "typescript")]
+fn test_untagged_union_variant_reader_body_is_empty() {
+    let ts = DateValue::ts_definition();
+    assert!(
+        ts.contains(
+            "export function DateValue$Variant(_value: unknown): string {\n  return \"\";\n}"
+        ),
+        "Got:\n{ts}"
+    );
+}
+
 #[test]
 #[cfg(feature = "typescript")]
 fn test_named_union_typescript() {

@@ -607,6 +607,9 @@ thread_local! {
     /// of [`ALIAS_INFO`], which is written only where a generation surface is on: a transport
     /// reads this in every build.
     static WIRE_SCALARS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// The names of enums declared `#[serde(untagged)]`. Kept out of [`ALIAS_INFO`] for the same
+    /// reason as [`WIRE_SCALARS`]: a service macro reads this in every build.
+    static UNTAGGED_ENUMS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
 
 thread_local! {
@@ -863,6 +866,25 @@ pub fn record_wire_scalar(rust_ident: &str) {
 /// below the item asking.
 pub fn is_recorded_wire_scalar(rust_ident: &str) -> bool {
     WIRE_SCALARS.with(|names| names.borrow().contains(rust_ident))
+}
+
+/// Records that `rust_ident` names an enum declared `#[serde(untagged)]`.
+pub fn record_untagged_enum(rust_ident: &str) {
+    UNTAGGED_ENUMS.with(|names| {
+        names.borrow_mut().insert(rust_ident.to_owned());
+    });
+}
+
+/// Whether `ty`'s own name is one [`record_untagged_enum`] has seen. `false` for a type declared
+/// below the item asking.
+pub fn is_recorded_untagged_enum(ty: &Type) -> bool {
+    let Type::Path(named) = ty else {
+        return false;
+    };
+    let Some(leaf) = named.path.segments.last() else {
+        return false;
+    };
+    UNTAGGED_ENUMS.with(|names| names.borrow().contains(&leaf.ident.to_string()))
 }
 
 pub fn lookup_alias_info(rust_ident: &str) -> Option<AliasInfo> {
