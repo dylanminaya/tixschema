@@ -1,16 +1,19 @@
 //! The emitted `http_rest` server run under Node: the design's seven requests, the reader
-//! forms, a macro-generated message read off the query and the body, and the three body kinds
-//! compared against the Rust `{service}_http_rest_dispatcher!()` twin for the same request.
+//! forms, a macro-generated message read off the query and the body, a bound `header_in`
+//! echoed back and compared with the Rust twin, and the three body kinds compared against the
+//! Rust `{service}_http_rest_dispatcher!()` twin for the same request.
 //!
 //! Beside `node` itself, this leg reaches for the `zod` package through `TIXSCHEMA_NODE_MODULES`
 //! — the real schemas a bad payload has to fail against, not the stubs `run_node.rs` names for
 //! the URL-shaped client leg. `just test-emitted` resolves it up front and refuses to stand down.
 
 use super::content_http_rest_transport;
+use super::echo_http_rest_transport;
 use super::runtime::{node_modules, ran_with_modules, stand_down_modules};
 use super::tests::{
     ArchiveClientServiceSchema, ArchiveError, ArchiveStatus, ContentBackEnd,
     ContentClientServiceSchema, ContentError, ConversationClientServiceSchema, ConversationId,
+    EchoBackEnd, EchoClientServiceSchema, EchoRangeError, EchoRangeResponse,
     GateClientServiceSchema, GateError, GateStatus, SealClientServiceSchema, SealError, SealStatus,
     SearchClientServiceSchema, SearchEcho, SearchError, ThumbnailBackEnd,
     ThumbnailClientServiceSchema, ThumbnailError, UploadDocumentBackEnd,
@@ -227,9 +230,8 @@ async function main() {
 main().catch((error) => { console.error(error); process.exit(1); });
 "#;
 
-/// `getFile`'s own signature carries no `byte_range` (H9 drops a bound header before it reaches
-/// an implementation), so the answer is always the full body — the one shape both dispatchers
-/// can agree on.
+/// `getFile`'s own signature carries no `byte_range`: it declares no `header_in` binding at all,
+/// so the answer is always the full body — the one shape both dispatchers can agree on.
 const STREAM_DRIVER: &str = r#"
 async function main() {
   const content = new TextEncoder().encode("the quick brown fox jumps over the lazy dog");
@@ -287,10 +289,9 @@ async function main() {
 main().catch((error) => { console.error(error); process.exit(1); });
 "#;
 
-/// `attachment`'s own bytes are never read on the TypeScript side either (H9's same drop, for a
-/// `part(...)` binding), so the success value the implementation answers with is built from
-/// `folder_id`, `title` and whether `description` carried a part — nothing the Rust side alone
-/// can see.
+/// `attachment`'s own bytes reach the implementation (as `unknown`) but the driver below never
+/// reads them, so the success value it answers with is built from `folder_id`, `title` and
+/// whether `description` carried a part — nothing the Rust side alone can see.
 const MULTIPART_DRIVER: &str = r#"
 async function main() {
   const impl = {
@@ -313,6 +314,36 @@ async function main() {
     ok: await answered([["title", "quarterly-report"], ["description", "Q3 numbers"], ["file", "stand-in"]]),
     tooLarge: await answered([["title", "toolarge"], ["file", "stand-in"]]),
     missingFile: await answered([["title", "no-file"]]),
+  };
+  console.log(JSON.stringify(results));
+  process.exit(0);
+}
+main().catch((error) => { console.error(error); process.exit(1); });
+"#;
+
+/// A required `header_in` binding, echoed back by the implementation: present, the value it was
+/// bound reaches `impl.echoRange` as its own argument after the message; absent, the dispatcher
+/// refuses before the implementation is ever called.
+const ECHO_DRIVER: &str = r#"
+async function main() {
+  const impl = {
+    async echoRange(ctx, req, byteRange) {
+      return { ok: true, value: { received: byteRange } };
+    },
+  };
+  const dispatch = createEchoClientServiceHttpDispatcher(impl);
+
+  async function answered(headers) {
+    const response = await dispatch(
+      {},
+      { method: "GET", path: "/echo/d1", query: "", headers, body: new Uint8Array() },
+    );
+    return { status: response.status, headers: response.headers, bodyBytes: Array.from(response.body) };
+  }
+
+  const results = {
+    present: await answered([["range", "bytes=0-9"]]),
+    absent: await answered([]),
   };
   console.log(JSON.stringify(results));
   process.exit(0);
@@ -367,6 +398,19 @@ impl upload_document_http_rest_transport::FaultHandler for RecordingFaultHandler
         fault: &super::tests::upload_document_client_service_schema::ServiceFault,
     ) -> upload_document_http_rest_transport::OutgoingResponse {
         upload_document_http_rest_transport::OutgoingResponse::new(
+            499,
+            vec![("x-fault-kind".to_owned(), format!("{}", fault.kind()))],
+            b"handled".to_vec(),
+        )
+    }
+}
+
+impl echo_http_rest_transport::FaultHandler for RecordingFaultHandler {
+    fn on_fault(
+        &self,
+        fault: &super::tests::echo_client_service_schema::ServiceFault,
+    ) -> echo_http_rest_transport::OutgoingResponse {
+        echo_http_rest_transport::OutgoingResponse::new(
             499,
             vec![("x-fault-kind".to_owned(), format!("{}", fault.kind()))],
             b"handled".to_vec(),
@@ -868,16 +912,124 @@ fn multipart_body_kind_agrees_with_rust() {
     );
     assert_eq!(rust_too_large.status, 413, "got: {rust_too_large:#?}");
 
+    // The missing-part fault's `detail` text is no longer byte-equal with Rust's: this dispatcher
+    // now builds it through the shared `{prefix}InboundFault` a bad payload also answers through
+    // (the task the header echo group above documents), whose `detail` embeds the field the way a
+    // zod issue's own message does (`'file': ...`), where the Rust `multipart_part_let` writes the
+    // bare message and carries the field in its own `field`. `status`, `kind` and `field` still
+    // agree, and those are compared here instead of the raw body.
     let node_missing_file = node_answered(&results["missingFile"]);
     let rust_missing_file = upload_document_rust_answered(vec![(
         "title".to_owned(),
         upload_document_http_rest_transport::IncomingPart::Text("no-file".to_owned()),
     )]);
     assert_eq!(
-        node_missing_file, rust_missing_file,
-        "node: {node_missing_file:#?}, rust: {rust_missing_file:#?}"
+        node_missing_file.status, rust_missing_file.status,
+        "got: {node_missing_file:#?}"
     );
     assert_eq!(rust_missing_file.status, 400, "got: {rust_missing_file:#?}");
+    let node_missing_file_body: serde_json::Value =
+        serde_json::from_slice(&node_missing_file.body).unwrap();
+    let rust_missing_file_body: serde_json::Value =
+        serde_json::from_slice(&rust_missing_file.body).unwrap();
+    assert_eq!(
+        node_missing_file_body["field"], rust_missing_file_body["field"],
+        "got: {node_missing_file_body:#?}"
+    );
+    assert_eq!(
+        node_missing_file_body["kind"], rust_missing_file_body["kind"],
+        "got: {node_missing_file_body:#?}"
+    );
+    assert_eq!(
+        node_missing_file_body["field"], "file",
+        "got: {node_missing_file_body:#?}"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// Group 5: a required `header_in` binding, echoed back by the implementation — present or
+// absent, compared byte-for-byte with the Rust `{service}_http_rest_dispatcher!()` twin.
+// -------------------------------------------------------------------------------------------
+
+fn echo_emitted() -> String {
+    [
+        "import { z } from \"zod\";".to_owned(),
+        EchoRangeResponse::ts_definition(),
+        EchoRangeResponse::zod_schema(),
+        EchoRangeError::ts_definition(),
+        EchoRangeError::zod_schema(),
+        EchoClientServiceSchema::ts_definition(),
+        EchoClientServiceSchema::ts_service(),
+        EchoClientServiceSchema::ts_http_service(),
+    ]
+    .join("\n\n")
+}
+
+fn echo_rust_answered(headers: Vec<(String, String)>) -> Answered {
+    let request = echo_http_rest_transport::IncomingRequest::new(
+        "GET".to_owned(),
+        "/echo/d1".to_owned(),
+        String::new(),
+        headers,
+        Vec::new(),
+    );
+    let response = poll_once(echo_http_rest_transport::dispatch(
+        &EchoBackEnd,
+        &(),
+        &request,
+        &echo_http_rest_transport::DefaultFaultHandler,
+    ))
+    .unwrap();
+    Answered {
+        body: response.body().to_vec(),
+        headers: sorted(response.headers().to_vec()),
+        status: response.status(),
+    }
+}
+
+#[test]
+fn a_bound_header_reaches_the_implementation_and_agrees_with_the_rust_dispatcher() {
+    let module = format!("{}\n\n{ECHO_DRIVER}", echo_emitted());
+    let Some(results) = run_or_stand_down("http-service-echo", "echo.mts", &module) else {
+        return;
+    };
+
+    let node_present = node_answered(&results["present"]);
+    let rust_present = echo_rust_answered(vec![("range".to_owned(), "bytes=0-9".to_owned())]);
+    assert_eq!(
+        node_present, rust_present,
+        "node: {node_present:#?}, rust: {rust_present:#?}"
+    );
+    assert_eq!(rust_present.status, 200, "got: {rust_present:#?}");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&rust_present.body).unwrap(),
+        serde_json::json!({"received": "bytes=0-9"}),
+        "got: {rust_present:#?}"
+    );
+
+    // The 400 case is not compared byte-for-byte with the Rust twin: the Rust `header_in_let`
+    // decode (`http_rest.rs`) answers a missing required header through the same generic
+    // `refused_payload` a malformed payload gets, which names no field for a scalar type failing
+    // to deserialize from `null` — unlike the sibling `multipart_part_let`, which does name one.
+    // That gap is Rust's own and pre-dates this task; only the status is compared here, and the
+    // TypeScript side's own `field` is asserted against the framed fault this task's dispatcher
+    // now builds.
+    let node_absent = node_answered(&results["absent"]);
+    let rust_absent = echo_rust_answered(Vec::new());
+    assert_eq!(
+        node_absent.status, rust_absent.status,
+        "got: {node_absent:#?}"
+    );
+    assert_eq!(rust_absent.status, 400, "got: {rust_absent:#?}");
+    let node_absent_body: serde_json::Value = serde_json::from_slice(&node_absent.body).unwrap();
+    assert_eq!(
+        node_absent_body["field"], "range",
+        "got: {node_absent_body:#?}"
+    );
+    assert_eq!(
+        node_absent_body["kind"], "failed-validation",
+        "got: {node_absent_body:#?}"
+    );
 }
 
 // -------------------------------------------------------------------------------------------
@@ -1049,6 +1201,56 @@ fn the_upload_document_route_table_and_incoming_request_read_back_what_they_were
         &(),
         &unmatched,
         Vec::new(),
+        &RecordingFaultHandler,
+    ))
+    .unwrap();
+    assert_eq!(response.status(), 499);
+    assert_eq!(response.body(), b"handled");
+}
+
+#[test]
+fn the_echo_route_table_and_incoming_request_read_back_what_they_were_built_with() {
+    let routes = echo_http_rest_transport::ROUTES;
+    assert_eq!(
+        routes.len(),
+        1,
+        "got: {:?}",
+        routes
+            .iter()
+            .map(echo_http_rest_transport::Route::operation)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(routes[0].method(), "GET");
+    assert_eq!(routes[0].path(), "/echo/{document_id}");
+    assert_eq!(routes[0].operation(), "echo-range");
+    assert_eq!(routes[0].ok_status(), 200);
+    assert_eq!(routes[0].error_statuses(), &[404]);
+
+    let request = echo_http_rest_transport::IncomingRequest::new(
+        "GET".to_owned(),
+        "/echo/d1".to_owned(),
+        "unused=1".to_owned(),
+        vec![("x-trace".to_owned(), "abc".to_owned())],
+        b"ignored".to_vec(),
+    );
+    assert_incoming_request_reads_back(
+        request.body(),
+        request.query(),
+        request.headers(),
+        request.header("x-trace"),
+    );
+
+    let unmatched = echo_http_rest_transport::IncomingRequest::new(
+        "GET".to_owned(),
+        "/nowhere".to_owned(),
+        String::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    let response = poll_once(echo_http_rest_transport::dispatch(
+        &EchoBackEnd,
+        &(),
+        &unmatched,
         &RecordingFaultHandler,
     ))
     .unwrap();

@@ -103,6 +103,7 @@ const IMPLEMENTATION_HEAD: &str = r#"import {
   createProbeServiceDispatcher,
   type ProbeServiceExpireCreditOutcome,
   type ProbeServiceGetBalanceOutcome,
+  type ProbeServiceProbeHeaderOutcome,
   type ProbeServiceSettleOutcome,
   type ProbeServiceSweepOutcome,
 } from "./bundle";
@@ -119,7 +120,7 @@ const IMPLEMENTATION_TAIL: &str = "});\n";
 /// [`OMITTED`] dropped and nothing else changed, so the two files differ by exactly one member and
 /// a slip in either is a slip in both.
 #[cfg(feature = "zod")]
-const IMPLEMENTATION_MEMBERS: [(&str, &str); 5] = [
+const IMPLEMENTATION_MEMBERS: [(&str, &str); 6] = [
     (
         "applyBundle",
         "  async applyBundle(ctx, req): Promise<void> {
@@ -158,6 +159,15 @@ const IMPLEMENTATION_MEMBERS: [(&str, &str); 5] = [
     return { ok: false, error: { errorCode: "db-error" } };
   },
 "#,
+    ),
+    (
+        "probeHeader",
+        "  async probeHeader(ctx, req, probeTag): Promise<ProbeServiceProbeHeaderOutcome> {
+    void req;
+    void `${ctx.loggerName}:${probeTag}`;
+    return { ok: true, value: { credits: probeTag.length } };
+  },
+",
     ),
 ];
 
@@ -224,6 +234,7 @@ const ATTACHMENT_HEAD: &str = r#"import {
   type ProbeServiceExpireCreditOutcome,
   type ProbeServiceFaultKind,
   type ProbeServiceGetBalanceOutcome,
+  type ProbeServiceProbeHeaderOutcome,
   type ProbeServiceSettleOutcome,
   type ProbeServiceSweepOutcome,
 } from "./bundle";
@@ -252,6 +263,7 @@ const HTTP_IMPLEMENTATION_HEAD: &str = r#"import {
   type ProbeServiceExpireCreditOutcome,
   type ProbeServiceGetBalanceOutcome,
   type ProbeServiceHttpRequest,
+  type ProbeServiceProbeHeaderOutcome,
   type ProbeServiceSettleOutcome,
   type ProbeServiceSweepOutcome,
 } from "./bundle";

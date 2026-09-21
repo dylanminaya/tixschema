@@ -113,10 +113,10 @@ export function createConversationClientServiceHttpDispatcher<Ctx>(
   onFault: ConversationClientServiceHttpFaultHandler = conversationClientServiceHttpDefaultFaultHandler,
 ): (ctx: Ctx, request: ConversationClientServiceHttpRequest) => Promise<ConversationClientServiceHttpResponse> {
   const dispatch = createConversationClientServiceDispatcher(impl);
-  const answer = async (ctx: Ctx, operation: string, payload: unknown, okStatus: number, errorStatus: (error: unknown) => number) => {
+  const answer = async (ctx: Ctx, request: ConversationClientServiceHttpRequest, operation: string, payload: unknown, okStatus: number, errorStatus: (error: unknown) => number) => {
     let answered: unknown;
     try {
-      answered = await dispatch(ctx, operation, payload);
+      answered = await dispatch(ctx, operation, payload, request.headers);
     } catch (thrown) {
       return onFault(conversationClientServiceHttpFault(\"handler-panic\", operation, thrown instanceof Error ? thrown.message : String(thrown)));
     }
@@ -134,7 +134,7 @@ export function createConversationClientServiceHttpDispatcher<Ctx>(
       const captured = conversationClientServiceHttpMatchPath([\"/v1/conversations/\", null], path);
       if (captured !== undefined) {
         const [conversation_id] = captured;
-        return answer(ctx, \"purge-conversation\", conversation_id, 204, () => 422);
+        return answer(ctx, request, \"purge-conversation\", conversation_id, 204, () => 422);
       }
     }
     // window: GET /v1/conversations/{conversation_id}/window \u{2014} an author-declared message: the placeholder
@@ -145,7 +145,7 @@ export function createConversationClientServiceHttpDispatcher<Ctx>(
         const [conversation_id] = captured;
         const message: Record<string, unknown> = {};
         message[\"conversation_id\"] = conversation_id;
-        return answer(ctx, \"window\", message, 200, (error) => {
+        return answer(ctx, request, \"window\", message, 200, (error) => {
           switch (WindowError$Variant(error)) {
             case \"NotFound\": return 404;
             default: return 422;
@@ -223,10 +223,10 @@ fn both_shapes_carry_uint8array_bodies_and_the_requests_own_content_type_is_neve
         "got: {written}"
     );
     assert!(
-        !written.contains("request.headers")
-            || !written[..written.find("request.headers").unwrap_or(written.len())]
-                .contains("content-type"),
-        "the dispatcher never reads the request's own content-type header. Got: {written}"
+        !written
+            .contains("request.headers.find(([name]) => name.toLowerCase() === \"content-type\")"),
+        "the dispatcher hands the request's own headers to `dispatch` unread, and never reads a \
+         content-type off them itself. Got: {written}"
     );
 }
 
@@ -236,7 +236,9 @@ fn both_shapes_carry_uint8array_bodies_and_the_requests_own_content_type_is_neve
 fn a_single_scalar_placeholder_message_is_the_placeholder_itself() {
     let written = http_service_of(MIXED_HTTP_SERVICE);
     assert!(
-        written.contains("return answer(ctx, \"purge-document\", document_id, 204, () => 422);"),
+        written.contains(
+            "return answer(ctx, request, \"purge-document\", document_id, 204, () => 422);"
+        ),
         "got: {written}"
     );
 }
@@ -287,7 +289,7 @@ fn a_generated_bodyless_message_reads_its_unbound_fields_off_the_query_with_thei
 fn an_operation_with_no_error_status_table_answers_422_and_calls_no_reader() {
     let written = http_service_of(QUERY_HTTP_SERVICE);
     assert!(
-        written.contains("return answer(ctx, \"search\", message, 200, () => 422);"),
+        written.contains("return answer(ctx, request, \"search\", message, 200, () => 422);"),
         "got: {written}"
     );
     assert!(
@@ -296,41 +298,30 @@ fn an_operation_with_no_error_status_table_answers_422_and_calls_no_reader() {
     );
 }
 
-/// An `Option<_>` `header_in` binding produces a route with no error and no slot: the operation
-/// is served, its header parameter is named nowhere in the dispatcher, the message it does build
-/// has no key for it either, and no presence check is emitted for it.
+/// A `header_in` binding — bound or not — is read and refused by `create{Service}Dispatcher`
+/// itself (see `service_tests`), never by this module: this server keeps no presence check of its
+/// own for either the optional binding `MIXED_HTTP_SERVICE` declares or the required one
+/// `REQUIRED_HEADER_HTTP_SERVICE` declares, and it never names the header's own parameter — it
+/// only ever hands the whole request's own `headers` array to `dispatch`.
 #[test]
-fn an_optional_header_in_binding_is_dropped_with_no_presence_check() {
-    let written = http_service_of(MIXED_HTTP_SERVICE);
-    assert!(
-        written.contains("operation: \"get-version\""),
-        "the route exists. Got: {written}"
-    );
-    assert!(
-        !written.contains("byte_range") && !written.contains("byteRange"),
-        "the header's own parameter reaches no local and no message key. Got: {written}"
-    );
-    assert!(
-        !written.contains("a required header was not carried"),
-        "an Option<_> header emits no presence check. Got: {written}"
-    );
-}
-
-/// A required (non-`Option`) `header_in` binding gets a presence check mirroring the Rust
-/// `IncomingRequest::header`'s case-insensitive read, and its value still reaches no local.
-#[test]
-fn a_required_header_in_binding_gets_a_presence_check() {
-    let written = http_service_of(REQUIRED_HEADER_HTTP_SERVICE);
-    assert!(
-        written
-            .contains("if (!request.headers.some(([name]) => name.toLowerCase() === \"range\")) {")
-            && written.contains("\"a required header was not carried\""),
-        "a required header_in binding is checked for presence. Got: {written}"
-    );
-    assert!(
-        !written.contains("byte_range") && !written.contains("byteRange"),
-        "the header's own parameter reaches no local and no message key. Got: {written}"
-    );
+fn a_header_in_binding_is_read_by_the_dispatcher_not_by_this_server() {
+    for source in [MIXED_HTTP_SERVICE, REQUIRED_HEADER_HTTP_SERVICE] {
+        let written = http_service_of(source);
+        assert!(
+            written.contains("operation: \"get-version\""),
+            "the route exists. Got: {written}"
+        );
+        assert!(
+            !written.contains("byte_range") && !written.contains("byteRange"),
+            "the header's own parameter is named nowhere in this module. Got: {written}"
+        );
+        assert!(
+            !written.contains("a required header was not carried"),
+            "this server keeps no presence check of its own: the dispatcher refuses a missing \
+             required header. Got: {written}"
+        );
+        assert!(written.contains("dispatch(ctx, "), "got: {written}");
+    }
 }
 
 /// A `body = "bytes"` reply destructures the bytes, their content type, and any declared
@@ -362,26 +353,30 @@ fn a_stream_reply_answers_206_or_the_declared_status_off_the_streamed_records_ow
     );
 }
 
-/// A `header_in`/`part(...)`-free multipart field is read off the request's own `parts`, and a
-/// `part(...)` binding is checked for presence only — refused where the request never carried it,
-/// its value never read past that, mirroring `multipart_part_let`'s own refusal without a slot to
-/// deliver the value through.
+/// A `header_in`/`part(...)`-free multipart field is still read off the request's own `parts`
+/// here, the way an unbound query field is read off the query string. A `part(...)` binding
+/// itself is neither checked nor read here at all: the request's own `parts` array is handed to
+/// `dispatch` whole, and `create{Service}Dispatcher` is where a bound part is looked up, refused
+/// if missing, and read — see `service_tests`.
 #[test]
-fn a_multipart_operation_reads_its_fields_off_parts_and_checks_a_bound_part_for_presence_only() {
+fn a_multipart_operation_reads_its_own_fields_off_parts_and_hands_a_bound_part_to_the_dispatcher() {
     let written = http_service_of(MULTIPART_HTTP_SERVICE);
     assert!(
         written.contains("request.parts.find(([name]) => name === \"title\")"),
         "an ordinary Generated field is read off a named part. Got: {written}"
     );
     assert!(
-        written.contains("if (!request.parts.some(([name]) => name === \"file\")) {")
-            && written.contains("\"a required multipart part was not carried\", \"file\""),
-        "a `part(...)` binding is checked for presence, mirroring the Rust refusal, and names \
-         the part in `field`. Got: {written}"
+        !written.contains("\"a required multipart part was not carried\""),
+        "this server keeps no presence check of its own for a `part(...)` binding: the \
+         dispatcher refuses a missing required one. Got: {written}"
     );
     assert!(
         !written.contains("attachment"),
-        "the part's own value reaches no local: it has no slot to deliver it through, exactly \
-         like a header. Got: {written}"
+        "the part's own parameter is named nowhere in this module. Got: {written}"
+    );
+    assert!(
+        written.contains("dispatch(ctx, operation, payload, request.headers, request.parts)"),
+        "a multipart service hands the request's own parts to the dispatcher beside its \
+         headers. Got: {written}"
     );
 }

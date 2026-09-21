@@ -1977,7 +1977,7 @@ export interface UsageServiceImpl<Ctx> {
 ```typescript
 export function createUsageServiceDispatcher<Ctx>(
   impl: UsageServiceImpl<Ctx>,
-): (ctx: Ctx, operation: string, payload: unknown) => Promise<unknown> {
+): (ctx: Ctx, operation: string, payload: unknown, headers?: ReadonlyArray<readonly [string, string]>, parts?: ReadonlyArray<readonly [string, unknown]>) => Promise<unknown> {
 ```
 
 Every member is required, so an implementation missing one is refused where it reaches `createUsageServiceDispatcher`. Every emitted name carries the service -- `UsageServiceFault`, `UsageServiceGetAvailableBalanceResult`, `UsageServiceClient`, and the fault's own brand symbol `usageServiceFaultSeal` -- because TypeScript has no per-service scope and a bundle is one flat file. Rust needs no such prefix, the generated module being the scope TypeScript lacks.
@@ -2202,6 +2202,21 @@ impl<H: FaultHandler + Sync> http_rest_client::Transport for HttpLoop<'_, H> {
 A client adapter is the mirror: a small hand-written `Transport` implementation over a real HTTP stack (reqwest in Rust; a service-agnostic `fetch` helper in TypeScript; a service-agnostic `send` implementation in Dart), living with whichever codebase calls the service, doing exactly one job -- carry the plain-terms request across a real connection and hand the plain-terms response back. Timeouts, cancellation, retries, connection handling, mutual TLS and authentication are that adapter's own concerns, never the generated seam's, exactly as `amqp_rpc`'s own adapter split already works: the generator emits the seam, the application implements it against its own libraries, and a workspace that wants to share one adapter across services keeps it in its own crate under its own name -- never a `tixschema`-branded runtime dependency.
 
 **The TypeScript REST server.** `<Service>Schema::ts_http_service()` emits the route table, the plain-terms request and response shapes, a fault handler with the Rust defaults, and `create{Service}HttpDispatcher(impl, onFault?)` -- the TypeScript twin of `ROUTES`, `IncomingRequest`/`OutgoingResponse`, `FaultHandler` and `dispatch` above, doing its own method and path matching, placeholder and query coercion, and message assembly rather than taking an already-matched operation name. It names no framework: the adapter that binds it to a real listener is the hosting application's, exactly as the client adapter above is.
+
+Each bound `header_in` and `part(...)` arrives at the TypeScript implementation as its own argument after the message, in declaration order, the way the Rust trait method already receives it -- `create{Service}Dispatcher` looks it up, decodes it and refuses a missing required one through the same framed fault a bad payload gets, before the implementation is ever called, so an argument read there is as trustworthy as the message is. `get_version`'s `byte_range` above reaches its TypeScript implementation this way:
+
+```typescript
+// not compiled here
+export interface DocumentServiceImpl<Ctx> {
+  getVersion(
+    ctx: Ctx,
+    req: GetVersionRequest,
+    byteRange: string | undefined,
+  ): Promise<DocumentServiceGetVersionOutcome>;
+}
+```
+
+The REST server itself keeps no presence check of its own: it passes the request's own `headers` and, on a service with at least one multipart operation, its own `parts` straight through to the dispatcher, exactly as it passes the assembled message.
 
 <!-- read from tests/service_schema_emitted_client_tests/run_node_http_service.rs, the Node `http` adapter driving the emitted dispatcher -->
 ```typescript

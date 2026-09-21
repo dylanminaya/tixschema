@@ -192,16 +192,11 @@ fn answers(service: &str, operation: &OperationDef) -> String {
 /// one argument per `header_in` binding, then one per `part` binding, in declaration order.
 fn method_params(operation: &OperationDef, shape: &HttpShape) -> String {
     let mut params = vec![format!("req: {}", message::typename(operation))];
-    for header in &shape.header_in {
-        let name = RenameRule::CamelCase.apply_to_field(&header.parameter.to_string());
-        let ty = get_field_def(&name, &header.ty, "").typescript_typename();
-        params.push(format!("{name}: {ty}"));
-    }
-    for part in &shape.multipart_parts {
-        let name = RenameRule::CamelCase.apply_to_field(&part.parameter.to_string());
-        let ty = get_field_def(&name, &part.ty, "").typescript_typename();
-        params.push(format!("{name}: {ty}"));
-    }
+    params.extend(
+        message::binding_params(shape)
+            .into_iter()
+            .map(|(name, ty)| format!("{name}: {ty}")),
+    );
     params.join(", ")
 }
 
