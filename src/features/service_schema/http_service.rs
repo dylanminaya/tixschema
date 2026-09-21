@@ -206,8 +206,8 @@ fn fault_fn(named: &str, prefix: &str) -> String {
     let fields = fault_fields_typescript_name(named);
     format!(
         "function {prefix}HttpFault(kind: {fields}[\"kind\"], operation: string, detail: \
-         string): {named}Fault {{\n  \
-         const built: {fields} = {{ detail, field: undefined, kind, operation }};\n  \
+         string, field?: string): {named}Fault {{\n  \
+         const built: {fields} = {{ detail, field, kind, operation }};\n  \
          return built as {named}Fault;\n\
          }}"
     )
@@ -569,11 +569,11 @@ fn path_token_list(path: &[PathSegment]) -> String {
 /// own value is never read past this — see the module's own doc on why.
 fn multipart_part_presence_check(part: &MultipartPart, wire: &str, prefix: &str) -> String {
     format!(
-        "        if (!request.parts.some(([name]) => name === \"{}\")) {{\n          \
+        "        if (!request.parts.some(([name]) => name === \"{name}\")) {{\n          \
          return onFault({prefix}HttpFault(\"failed-validation\", \"{wire}\", \"a required \
-         multipart part was not carried\"));\n        \
+         multipart part was not carried\", \"{name}\"));\n        \
          }}\n",
-        part.name,
+        name = part.name,
     )
 }
 
