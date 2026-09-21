@@ -59,6 +59,9 @@
 //! - `dart_ws_client()`: the Dart `ws_rpc` sibling — a transport over a sink and a stream, the
 //!   per-operation client answering the same sealed pair as `dart_http_client()`, and a dispatcher
 //!   attachment for a service the app implements (published only where the `dart` feature is on).
+//! - `swift_http_client()`: the Swift `http_rest` sibling — the transport seam, one `async`
+//!   method per operation over Swift's own `Result<Success, Failure>`, and the fault helpers
+//!   every method reaches for (published only where the `swift` feature is on).
 //!
 //! # The client and the dispatcher exist only where the Zod surface does
 //!
@@ -118,6 +121,10 @@ mod message;
 mod result;
 #[cfg(feature = "zod")]
 mod service;
+#[cfg(feature = "swift")]
+mod swift_http_client;
+#[cfg(feature = "swift")]
+mod swift_type;
 #[cfg(feature = "zod")]
 mod ws_client;
 #[cfg(feature = "zod")]
@@ -137,6 +144,7 @@ pub fn emit(service: &ServiceDef, non_exhaustive: bool) -> TokenStream {
     let published = published(service);
     let seam = seam(service);
     let dart_seam = dart_seam(service);
+    let swift_seam = swift_seam(service);
     let sealed = exhaustiveness(non_exhaustive);
     quote! {
         #(#[doc = #rustdoc])*
@@ -153,6 +161,7 @@ pub fn emit(service: &ServiceDef, non_exhaustive: bool) -> TokenStream {
 
             #seam
             #dart_seam
+            #swift_seam
         }
     }
 }
@@ -192,6 +201,27 @@ fn dart_seam(service: &ServiceDef) -> TokenStream {
 
 #[cfg(not(feature = "dart"))]
 fn dart_seam(_service: &ServiceDef) -> TokenStream {
+    TokenStream::new()
+}
+
+/// The service's generated Swift `http_rest` client: the transport seam, one `async` method per
+/// operation over Swift's own `Result<Success, Failure>`, and the fault helpers every method
+/// reaches for — published only where the `swift` feature publishes the Swift types and codec
+/// this client's messages, successes and errors are written in.
+#[cfg(feature = "swift")]
+fn swift_seam(service: &ServiceDef) -> TokenStream {
+    let client = swift_http_client::emit(service).join("\n\n");
+    quote! {
+        #[doc = " The service's generated Swift `http_rest` client: the transport seam, one"]
+        #[doc = " `async` method per operation, and the fault helpers every method reaches for."]
+        pub fn swift_http_client() -> String {
+            #client.to_owned()
+        }
+    }
+}
+
+#[cfg(not(feature = "swift"))]
+fn swift_seam(_service: &ServiceDef) -> TokenStream {
     TokenStream::new()
 }
 

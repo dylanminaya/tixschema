@@ -25,6 +25,8 @@ mod http_client_tests;
 mod http_service_tests;
 #[cfg(feature = "zod")]
 mod service_tests;
+#[cfg(feature = "swift")]
+mod swift_http_client_tests;
 #[cfg(feature = "zod")]
 mod ws_client_tests;
 #[cfg(feature = "zod")]
@@ -46,6 +48,8 @@ use super::http_client;
 use super::http_service;
 #[cfg(feature = "zod")]
 use super::service;
+#[cfg(feature = "swift")]
+use super::swift_http_client;
 #[cfg(feature = "zod")]
 use super::ws_client;
 #[cfg(feature = "zod")]
@@ -475,6 +479,203 @@ const DART_WS_SERVICE: &str = "
     }
 ";
 
+/// A service exercising every `http(...)` shape the Swift client answers for: a bodied `POST`
+/// naming its own message with a mapped error, a bodyless `GET` with a path carrying two
+/// placeholders on a `Named` message plus a `header_in` binding and a `header_out` tuple success,
+/// a bodyless `GET` whose unbound optional fields (a scalar and a `Vec`) build a query string, a
+/// `body = "bytes"` `GET` whose one argument is the message and the whole placeholder at once, a
+/// one-way `DELETE` in that same single-placeholder shape, and an operation naming no `http(...)`
+/// group at all. Swift-gated mirror of `DART_HTTP_SERVICE`.
+#[cfg(feature = "swift")]
+const SWIFT_HTTP_SERVICE: &str = "
+    pub trait DocumentClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"POST\",
+            path = \"/documents\",
+            error_status(TitleTaken = 409)
+        ))]
+        async fn create_document(
+            &self,
+            ctx: &Ctx,
+            req: CreateDocumentRequest,
+        ) -> Result<CreateDocumentResponse, CreateDocumentError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/versions/{version_id}\",
+            ok_status = 200,
+            header_in(\"range\" = byte_range),
+            header_out(\"etag\"),
+            error_status(NotFound = 404, VersionGone = 410),
+        ))]
+        async fn get_version(
+            &self,
+            ctx: &Ctx,
+            req: GetVersionRequest,
+            byte_range: Option<String>,
+        ) -> Result<(VersionResponse, String), GetVersionError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/search\",
+            error_status(SearchFailed = 500),
+        ))]
+        async fn search_documents(
+            &self,
+            ctx: &Ctx,
+            q: Option<String>,
+            tags: Option<Vec<String>>,
+        ) -> Result<SearchResponse, SearchError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/thumbnail\",
+            error_status(NotFound = 404),
+            body = \"bytes\",
+        ))]
+        async fn get_thumbnail(
+            &self,
+            ctx: &Ctx,
+            document_id: String,
+        ) -> Result<(Vec<u8>, String), ThumbnailError>;
+
+        #[service_schema_op(one_way, http(method = \"DELETE\", path = \"/documents/{document_id}\"))]
+        async fn purge_document(&self, ctx: &Ctx, document_id: String);
+
+        async fn sweep_documents(&self, ctx: &Ctx) -> Result<SweepReport, SweepError>;
+    }
+";
+
+/// A service declaring one `body = \"bytes\"` operation composing `header_out` onto its own tuple:
+/// the bytes, their content type, then the declared header. Swift-gated mirror of
+/// `DART_BYTES_HEADER_OUT_SERVICE`.
+#[cfg(feature = "swift")]
+const SWIFT_BYTES_HEADER_OUT_SERVICE: &str = "
+    pub trait ThumbnailClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/thumbnail\",
+            body = \"bytes\",
+            header_out(\"x-document-id\"),
+            error_status(NotFound = 404),
+        ))]
+        async fn get_thumbnail(
+            &self,
+            ctx: &Ctx,
+            document_id: String,
+        ) -> Result<(Vec<u8>, String, String), ThumbnailError>;
+    }
+";
+
+/// A service declaring two `body = \"stream\"` operations: one answering the bare streamed answer,
+/// one composing a declared `header_out` onto it. Swift-gated mirror of `DART_STREAM_HTTP_SERVICE`.
+#[cfg(feature = "swift")]
+const SWIFT_STREAM_HTTP_SERVICE: &str = "
+    pub trait ContentClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/files/{file_id}\",
+            body = \"stream\",
+            error_status(NotFound = 404),
+        ))]
+        async fn get_file(
+            &self,
+            ctx: &Ctx,
+            file_id: String,
+        ) -> Result<StreamedAnswer, ContentError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/files/{file_id}/tagged\",
+            body = \"stream\",
+            header_out(\"x-checksum\"),
+            error_status(NotFound = 404),
+        ))]
+        async fn get_tagged_file(
+            &self,
+            ctx: &Ctx,
+            file_id: String,
+        ) -> Result<(StreamedAnswer, String), ContentError>;
+    }
+";
+
+/// A service declaring one `body = \"multipart\"` operation: a path placeholder, two scalar
+/// `Generated` fields (one required, one optional) and a `part` binding for the file itself.
+/// Swift-gated mirror of `DART_MULTIPART_HTTP_SERVICE`.
+#[cfg(feature = "swift")]
+const SWIFT_MULTIPART_HTTP_SERVICE: &str = "
+    pub trait UploadClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"POST\",
+            path = \"/folders/{folder_id}/documents\",
+            body = \"multipart\",
+            part(\"file\" = attachment),
+            error_status(TooLarge = 413),
+        ))]
+        async fn upload_document(
+            &self,
+            ctx: &Ctx,
+            folder_id: String,
+            title: String,
+            description: Option<String>,
+            attachment: Box<dyn upload_client_service_schema::BodySource + Send>,
+        ) -> Result<UploadResponse, UploadError>;
+    }
+";
+
+/// Swift-gated mirror of `DART_SINGLE_PLACEHOLDER_HTTP_SERVICE`.
+#[cfg(feature = "swift")]
+const SWIFT_SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
+    pub trait ConversationClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/conversations/{conversation_id}/window\",
+            error_status(NotFound = 404),
+        ))]
+        async fn window(
+            &self,
+            ctx: &Ctx,
+            req: WindowRequest,
+        ) -> Result<WindowPage, WindowError>;
+
+        #[service_schema_op(one_way, http(
+            method = \"DELETE\",
+            path = \"/conversations/{conversation_id}\",
+        ))]
+        async fn purge_conversation(&self, ctx: &Ctx, conversation_id: String);
+    }
+";
+
+/// A reply operation whose success is `()` — nothing rides in the client's success arm. Swift-gated
+/// mirror of `DART_UNIT_SUCCESS_HTTP_SERVICE`.
+#[cfg(feature = "swift")]
+const SWIFT_UNIT_SUCCESS_HTTP_SERVICE: &str = "
+    pub trait PingClientService<Ctx> {
+        #[service_schema_op(http(method = \"POST\", path = \"/v1/ping\"))]
+        async fn ping(&self, ctx: &Ctx, req: PingRequest) -> Result<(), PingError>;
+    }
+";
+
+/// A service declaring a `Vec<Option<String>>` `header_in` binding, to exercise a nested optional
+/// element inside an otherwise-required header. Swift-gated mirror of the Dart suite's own inline
+/// fixture.
+#[cfg(feature = "swift")]
+const SWIFT_HEADER_VEC_OF_OPTIONS_SERVICE: &str = "
+    pub trait TagClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/tags\",
+            header_in(\"x-tags\" = tags),
+        ))]
+        async fn list_tags(
+            &self,
+            ctx: &Ctx,
+            req: ListTagsRequest,
+            tags: Vec<Option<String>>,
+        ) -> Result<ListTagsResponse, ListTagsError>;
+    }
+";
+
 #[cfg(feature = "zod")]
 fn client_of(source: &str) -> String {
     client::emit(&parsed(source)).join("\n\n")
@@ -518,6 +719,11 @@ fn dart_ws_client_of(source: &str) -> String {
 #[cfg(feature = "dart")]
 fn dart_result_of(source: &str) -> Vec<String> {
     dart_result::emit(&parsed(source))
+}
+
+#[cfg(feature = "swift")]
+fn swift_http_client_of(source: &str) -> String {
+    swift_http_client::emit(&parsed(source)).join("\n\n")
 }
 
 fn parsed(source: &str) -> ServiceDef {
