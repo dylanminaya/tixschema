@@ -42,6 +42,12 @@ mod upload_document_http_rest_transport;
 #[path = "service_schema_emitted_client_tests/echo_http_rest_transport.rs"]
 mod echo_http_rest_transport;
 
+/// The `http_rest` dispatcher for `PulseClientService`, the Rust twin the bodyless-empty-message
+/// group is measured against.
+#[cfg(test)]
+#[path = "service_schema_emitted_client_tests/pulse_http_rest_transport.rs"]
+mod pulse_http_rest_transport;
+
 #[cfg(test)]
 #[path = "service_schema_emitted_client_tests/run_node.rs"]
 mod run_node;
@@ -73,10 +79,11 @@ mod runtime;
 #[cfg(test)]
 use tests::{
     ArchiveClientService, ContentClientService, ConversationClientService, EchoClientService,
-    GateClientService, SealClientService, SearchClientService, ThumbnailClientService,
-    UploadDocumentClientService, VaultClientService, archive_client_service_schema,
-    content_client_service_schema, conversation_client_service_schema, echo_client_service_schema,
-    gate_client_service_schema, seal_client_service_schema, search_client_service_schema,
+    GateClientService, PulseClientService, SealClientService, SearchClientService,
+    ThumbnailClientService, UploadDocumentClientService, VaultClientService,
+    archive_client_service_schema, content_client_service_schema,
+    conversation_client_service_schema, echo_client_service_schema, gate_client_service_schema,
+    pulse_client_service_schema, seal_client_service_schema, search_client_service_schema,
     thumbnail_client_service_schema, upload_document_client_service_schema,
     vault_client_service_schema,
 };

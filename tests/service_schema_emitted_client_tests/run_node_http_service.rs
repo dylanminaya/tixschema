@@ -9,12 +9,14 @@
 
 use super::content_http_rest_transport;
 use super::echo_http_rest_transport;
+use super::pulse_http_rest_transport;
 use super::runtime::{node_modules, ran_with_modules, stand_down_modules};
 use super::tests::{
     ArchiveClientServiceSchema, ArchiveError, ArchiveStatus, ContentBackEnd,
     ContentClientServiceSchema, ContentError, ConversationClientServiceSchema, ConversationId,
     EchoBackEnd, EchoClientServiceSchema, EchoRangeError, EchoRangeResponse,
-    GateClientServiceSchema, GateError, GateStatus, SealClientServiceSchema, SealError, SealStatus,
+    GateClientServiceSchema, GateError, GateStatus, PulseBackEnd, PulseClientServiceSchema,
+    PulseError, PulseResponse, SealClientServiceSchema, SealError, SealStatus,
     SearchClientServiceSchema, SearchEcho, SearchError, ThumbnailBackEnd,
     ThumbnailClientServiceSchema, ThumbnailError, UploadDocumentBackEnd,
     UploadDocumentClientServiceSchema, UploadDocumentError, UploadDocumentResponse,
@@ -351,6 +353,25 @@ async function main() {
 main().catch((error) => { console.error(error); process.exit(1); });
 "#;
 
+/// A bodyless `GET` carrying no field beside the context at all.
+const PULSE_DRIVER: &str = r#"
+async function main() {
+  const impl = {
+    async pulse() {
+      return { ok: true, value: { alive: true } };
+    },
+  };
+  const dispatch = createPulseClientServiceHttpDispatcher(impl);
+  const response = await dispatch(
+    {},
+    { method: "GET", path: "/pulse", query: "", headers: [], body: new Uint8Array() },
+  );
+  console.log(JSON.stringify({ status: response.status, headers: response.headers, bodyBytes: Array.from(response.body) }));
+  process.exit(0);
+}
+main().catch((error) => { console.error(error); process.exit(1); });
+"#;
+
 // -------------------------------------------------------------------------------------------
 // Group 1: the design's own seven requests, against the design's own Node `http` adapter.
 // -------------------------------------------------------------------------------------------
@@ -411,6 +432,19 @@ impl echo_http_rest_transport::FaultHandler for RecordingFaultHandler {
         fault: &super::tests::echo_client_service_schema::ServiceFault,
     ) -> echo_http_rest_transport::OutgoingResponse {
         echo_http_rest_transport::OutgoingResponse::new(
+            499,
+            vec![("x-fault-kind".to_owned(), format!("{}", fault.kind()))],
+            b"handled".to_vec(),
+        )
+    }
+}
+
+impl pulse_http_rest_transport::FaultHandler for RecordingFaultHandler {
+    fn on_fault(
+        &self,
+        fault: &super::tests::pulse_client_service_schema::ServiceFault,
+    ) -> pulse_http_rest_transport::OutgoingResponse {
+        pulse_http_rest_transport::OutgoingResponse::new(
             499,
             vec![("x-fault-kind".to_owned(), format!("{}", fault.kind()))],
             b"handled".to_vec(),
@@ -1033,6 +1067,65 @@ fn a_bound_header_reaches_the_implementation_and_agrees_with_the_rust_dispatcher
 }
 
 // -------------------------------------------------------------------------------------------
+// Group 6: a bodyless operation with no field beside the context, compared whole with the Rust
+// `{service}_http_rest_dispatcher!()` twin for the same request.
+// -------------------------------------------------------------------------------------------
+
+fn pulse_emitted() -> String {
+    [
+        "import { z } from \"zod\";".to_owned(),
+        PulseResponse::ts_definition(),
+        PulseResponse::zod_schema(),
+        PulseError::ts_definition(),
+        PulseError::zod_schema(),
+        PulseClientServiceSchema::ts_definition(),
+        PulseClientServiceSchema::ts_service(),
+        PulseClientServiceSchema::ts_http_service(),
+    ]
+    .join("\n\n")
+}
+
+fn pulse_rust_answered() -> Answered {
+    let request = pulse_http_rest_transport::IncomingRequest::new(
+        "GET".to_owned(),
+        "/pulse".to_owned(),
+        String::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    let response = poll_once(pulse_http_rest_transport::dispatch(
+        &PulseBackEnd,
+        &(),
+        &request,
+        &pulse_http_rest_transport::DefaultFaultHandler,
+    ))
+    .unwrap();
+    Answered {
+        body: response.body().to_vec(),
+        headers: sorted(response.headers().to_vec()),
+        status: response.status(),
+    }
+}
+
+#[test]
+fn a_bodyless_operation_with_no_field_assembles_the_same_message_as_the_rust_dispatcher() {
+    let module = format!("{}\n\n{PULSE_DRIVER}", pulse_emitted());
+    let Some(result) = run_or_stand_down("http-service-pulse", "pulse.mts", &module) else {
+        return;
+    };
+
+    let node = node_answered(&result);
+    let rust = pulse_rust_answered();
+    assert_eq!(node, rust, "node: {node:#?}, rust: {rust:#?}");
+    assert_eq!(rust.status, 200, "got: {rust:#?}");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&rust.body).unwrap(),
+        serde_json::json!({"alive": true}),
+        "got: {rust:#?}"
+    );
+}
+
+// -------------------------------------------------------------------------------------------
 // The Rust twins' own accessors, exercised once each — the same claims
 // `tests/service_schema_dispatch_tests/` makes for every other dispatcher macro placement.
 // -------------------------------------------------------------------------------------------
@@ -1249,6 +1342,61 @@ fn the_echo_route_table_and_incoming_request_read_back_what_they_were_built_with
     );
     let response = poll_once(echo_http_rest_transport::dispatch(
         &EchoBackEnd,
+        &(),
+        &unmatched,
+        &RecordingFaultHandler,
+    ))
+    .unwrap();
+    assert_eq!(response.status(), 499);
+    assert_eq!(response.body(), b"handled");
+}
+
+#[test]
+fn the_pulse_route_table_and_incoming_request_read_back_what_they_were_built_with() {
+    let routes = pulse_http_rest_transport::ROUTES;
+    assert_eq!(
+        routes.len(),
+        2,
+        "got: {:?}",
+        routes
+            .iter()
+            .map(pulse_http_rest_transport::Route::operation)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(routes[0].method(), "GET");
+    assert_eq!(routes[0].path(), "/pulse");
+    assert_eq!(routes[0].operation(), "pulse");
+    assert_eq!(routes[0].ok_status(), 200);
+    assert_eq!(routes[0].error_statuses(), &[422]);
+    assert_eq!(routes[1].method(), "DELETE");
+    assert_eq!(routes[1].path(), "/pulse/{id}");
+    assert_eq!(routes[1].operation(), "purge-pulse");
+    assert_eq!(routes[1].ok_status(), 204);
+    assert_eq!(routes[1].error_statuses(), &[] as &[u16]);
+
+    let request = pulse_http_rest_transport::IncomingRequest::new(
+        "GET".to_owned(),
+        "/pulse".to_owned(),
+        "unused=1".to_owned(),
+        vec![("x-trace".to_owned(), "abc".to_owned())],
+        b"ignored".to_vec(),
+    );
+    assert_incoming_request_reads_back(
+        request.body(),
+        request.query(),
+        request.headers(),
+        request.header("x-trace"),
+    );
+
+    let unmatched = pulse_http_rest_transport::IncomingRequest::new(
+        "GET".to_owned(),
+        "/nowhere".to_owned(),
+        String::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    let response = poll_once(pulse_http_rest_transport::dispatch(
+        &PulseBackEnd,
         &(),
         &unmatched,
         &RecordingFaultHandler,
