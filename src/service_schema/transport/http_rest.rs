@@ -1086,7 +1086,7 @@ fn error_status_expr(shape: &HttpShape, error_type: &Type) -> TokenStream {
         let arms = shape
             .error_status
             .iter()
-            .map(|(variant, code)| quote! { #error_type::#variant => #code, });
+            .map(|(variant, code)| quote! { #error_type::#variant { .. } => #code, });
         quote! { match &declared_error { #(#arms)* } }
     }
 }
