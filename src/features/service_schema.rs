@@ -41,6 +41,10 @@
 //!   naming this service off the socket seam `ts_ws_client()` publishes, drives the dispatcher
 //!   `ts_service()` publishes, and hands a refused notify's fault to a required `onFault`. A
 //!   bundle names `ts_ws_client()` before this, so the socket type it attaches to is declared.
+//! - `ts_ws_server()`: a `ws_rpc` server for Node that accepts connections — a context and an
+//!   idle-armed heartbeat per connection, a cancellation signal, and a hook that hands one socket
+//!   to a second service — wrapping `ts_ws_service()`'s attachment rather than re-emitting its
+//!   frame rules. A bundle names `ts_ws_client()`, then `ts_ws_service()`, then this.
 //! - `dart_http_client()`: the Dart sibling of `ts_http_client()` — the same `http_rest` seam and
 //!   per-operation client, in Dart, over the `dart` feature's own types and codec rather than Zod,
 //!   and throwing on failure rather than returning a result union (published only where the `dart`
@@ -105,6 +109,8 @@ mod result;
 mod service;
 #[cfg(feature = "zod")]
 mod ws_client;
+#[cfg(feature = "zod")]
+mod ws_server;
 #[cfg(feature = "zod")]
 mod ws_service;
 
@@ -182,6 +188,7 @@ fn seam(service: &ServiceDef) -> TokenStream {
     let service_side = service::emit(service).join("\n\n");
     let ws_client = ws_client::emit(service).join("\n\n");
     let ws_service = ws_service::emit(service).join("\n\n");
+    let ws_server = ws_server::emit(service).join("\n\n");
     quote! {
         #[doc = " The service's generated TypeScript client: the transport seam it is bound"]
         #[doc = " to, the type its methods are declared on, and the factory that binds one."]
@@ -213,6 +220,14 @@ fn seam(service: &ServiceDef) -> TokenStream {
         #[doc = " `onFault`."]
         pub fn ts_ws_service() -> String {
             #ws_service.to_owned()
+        }
+
+        #[doc = " The service's generated `ws_rpc` server for Node: accepts sockets a listener"]
+        #[doc = " produced, builds a context per connection, answers probes, and hands one socket"]
+        #[doc = " to a second service. Wraps `ts_ws_service()`'s attachment, so a bundle names that"]
+        #[doc = " first."]
+        pub fn ts_ws_server() -> String {
+            #ws_server.to_owned()
         }
     }
 }
@@ -294,11 +309,12 @@ fn seam_rustdoc(service: &str) -> Vec<String> {
         format!(
             " This build publishes no `{service}Schema::ts_client()`, no \
              `{service}Schema::ts_http_client()`, no `{service}Schema::ts_service()`, no \
-             `{service}Schema::ts_ws_client()`, and no `{service}Schema::ts_ws_service()`. All \
-             five parse a message against the schema `#[model_schema()]` writes for it, and only \
-             a build with tixschema's `zod` feature writes one — so rather than a client, a \
+             `{service}Schema::ts_ws_client()`, no `{service}Schema::ts_ws_service()`, and no \
+             `{service}Schema::ts_ws_server()`. The first five parse a message against the \
+             schema `#[model_schema()]` writes for it, and the sixth wraps the one that does; \
+             only a build with tixschema's `zod` feature writes one — so rather than a client, a \
              transport and a dispatcher that check nothing, this build publishes the service's \
-             types and leaves the five seam artifacts out. Add `features = [\"zod\"]` to the \
+             types and leaves the six seam artifacts out. Add `features = [\"zod\"]` to the \
              tixschema dependency to get them."
         ),
     ]
