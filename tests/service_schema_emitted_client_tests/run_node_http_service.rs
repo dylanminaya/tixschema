@@ -868,12 +868,16 @@ fn multipart_body_kind_agrees_with_rust() {
     );
     assert_eq!(rust_too_large.status, 413, "got: {rust_too_large:#?}");
 
-    // The Rust twin names the missing part in `field`; the emitted server does not yet, so
-    // `field` is left uncompared here.
     let node_missing_file = node_answered(&results["missingFile"]);
-    assert_eq!(node_missing_file.status, 400, "got: {node_missing_file:#?}");
-    let fault: serde_json::Value = serde_json::from_slice(&node_missing_file.body).unwrap();
-    assert_eq!(fault["kind"], "failed-validation", "got: {fault:#?}");
+    let rust_missing_file = upload_document_rust_answered(vec![(
+        "title".to_owned(),
+        upload_document_http_rest_transport::IncomingPart::Text("no-file".to_owned()),
+    )]);
+    assert_eq!(
+        node_missing_file, rust_missing_file,
+        "node: {node_missing_file:#?}, rust: {rust_missing_file:#?}"
+    );
+    assert_eq!(rust_missing_file.status, 400, "got: {rust_missing_file:#?}");
 }
 
 // -------------------------------------------------------------------------------------------
