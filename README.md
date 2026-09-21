@@ -3294,6 +3294,7 @@ The crate uses optional features to control code generation and dependencies. Al
 | `object_id` | No | MongoDB ObjectId type support with validation |
 | `chrono` | No | Chrono date/time type support (`NaiveDate`, `NaiveTime`, `NaiveDateTime`, `DateTime<Tz>`) |
 | `dart` | No | Dart type generation via `dart_definition()`, with a JSON `fromJson`/`toJson` codec |
+| `swift` | No | Swift type generation with a `Codable` codec |
 | `kotlin` | No | Kotlin type generation via `kotlin_definition()`, with `kotlinx.serialization` annotations. A consuming Kotlin build declares two dependencies: the runtime library `org.jetbrains.kotlinx:kotlinx-serialization-json` and the Kotlin Gradle plugin `kotlin("plugin.serialization")` |
 
 Common configurations:
@@ -3303,7 +3304,7 @@ Common configurations:
 tixschema = "0.1.0"
 
 # All features including optional ones
-tixschema = { features = ["serde", "zod", "jsonschema", "typescript", "object_id", "chrono", "dart", "kotlin"] }
+tixschema = { features = ["serde", "zod", "jsonschema", "typescript", "object_id", "chrono", "dart", "swift", "kotlin"] }
 
 # Minimal (TypeScript only, no Zod or JSON Schema)
 tixschema = { default-features = false, features = ["typescript"] }
@@ -3312,7 +3313,7 @@ tixschema = { default-features = false, features = ["typescript"] }
 tixschema = { default-features = false, features = ["serde", "zod", "typescript"] }
 ```
 
-All 2^8 = 256 feature combinations are tested in CI via `cargo-hack`.
+All 2^9 = 512 feature combinations are tested in CI via `cargo-hack`.
 
 ## Generating TypeScript Files
 

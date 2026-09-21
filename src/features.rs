@@ -23,6 +23,9 @@ pub mod chrono;
 #[cfg(feature = "dart")]
 pub mod dart;
 
+#[cfg(feature = "swift")]
+pub mod swift;
+
 #[cfg(feature = "kotlin")]
 pub mod kotlin;
 
@@ -65,6 +68,9 @@ impl Features {
         if Self::has_dart() {
             features.push("dart");
         }
+        if Self::has_swift() {
+            features.push("swift");
+        }
         if Self::has_kotlin() {
             features.push("kotlin");
         }
@@ -104,6 +110,11 @@ impl Features {
     /// Check if serde feature is enabled.
     pub const fn has_serde() -> bool {
         cfg!(feature = "serde")
+    }
+
+    /// Check if `swift` feature is enabled.
+    pub const fn has_swift() -> bool {
+        cfg!(feature = "swift")
     }
 
     /// Check if typescript feature is enabled.
