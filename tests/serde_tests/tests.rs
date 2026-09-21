@@ -10,6 +10,15 @@ enum Color {
     Red,
 }
 
+/// The internally tagged form's canonical error type: every variant a unit, the tag renamed and
+/// the variant names kebab-cased.
+#[model_schema()]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "kebab-case", tag = "errorCode")]
+enum WindowError {
+    NotFound,
+}
+
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -366,11 +375,31 @@ fn test_enum_rename_all_zod() {
 #[cfg(feature = "typescript")]
 fn test_enum_field_rename() {
     let ts = Color::ts_definition();
+    // The exported type never leaks the Rust name; the `$Variant` reader appended after it does
+    // by design, so the check is scoped to the type declaration alone.
+    let type_declaration = ts.split("\n\n").next().unwrap();
 
     assert!(ts.contains("\"Red\""));
     assert!(ts.contains("\"dark_green\""));
     assert!(ts.contains("\"Blue\""));
-    assert!(!ts.contains("\"Green\""));
+    assert!(!type_declaration.contains("\"Green\""));
+}
+
+/// The internally tagged reader reads the renamed tag key and inverts the kebab-cased wire name
+/// back to the Rust variant it names.
+#[test]
+#[cfg(feature = "typescript")]
+fn test_internally_tagged_variant_reader_reads_the_tag_key() {
+    let ts = WindowError::ts_definition();
+
+    assert!(
+        ts.contains("export function WindowError$Variant(value: unknown): string {"),
+        "Got: {ts}"
+    );
+    assert!(
+        ts.contains("case \"not-found\": return \"NotFound\";"),
+        "Got: {ts}"
+    );
 }
 
 #[test]

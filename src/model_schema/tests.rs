@@ -47,6 +47,8 @@ use super::{
 
 use syn::spanned::Spanned as _;
 
+use crate::utils::{is_recorded_untagged_enum, record_untagged_enum};
+
 /// The variants of [`rendered_discriminated_union`]'s enum, in the order they are declared.
 const DECLARED_VARIANTS: [&str; 6] = ["Upload", "Generate", "Delete", "Rename", "Move", "Archive"];
 
@@ -4109,6 +4111,7 @@ fn plain_enum_ts_definition_carries_no_cfg_attribute() {
         "Status",
         "",
         "  'a'",
+        "export function Status$Variant(value: unknown): string { return \"\"; }",
     );
     assert_no_cfg_attribute(&tokens, "generate_plain_enum_ts_definition_method");
 }
@@ -4117,7 +4120,12 @@ fn plain_enum_ts_definition_carries_no_cfg_attribute() {
 #[test]
 fn discriminated_enum_ts_definition_carries_no_cfg_attribute() {
     let tokens = super::generate_discriminated_enum_ts_definition_method(
-        " * Shape", "Shape", "Shape", "", "  'a'",
+        " * Shape",
+        "Shape",
+        "Shape",
+        "",
+        "  'a'",
+        "export function Shape$Variant(value: unknown): string { return \"\"; }",
     );
     assert_no_cfg_attribute(&tokens, "generate_discriminated_enum_ts_definition_method");
 }
@@ -12092,4 +12100,14 @@ fn a_field_bottoming_out_in_a_declared_type_is_walked_and_a_primitive_one_is_not
              run there. Got: {walks}"
         );
     }
+}
+
+#[test]
+fn untagged_enum_registry_answers_only_after_the_enum_is_recorded() {
+    let declared_below: syn::Type = syn::parse_quote!(UntaggedEnumRegistryProbeBelow);
+    assert!(!is_recorded_untagged_enum(&declared_below));
+
+    record_untagged_enum("UntaggedEnumRegistryProbeAbove");
+    let declared_above: syn::Type = syn::parse_quote!(UntaggedEnumRegistryProbeAbove);
+    assert!(is_recorded_untagged_enum(&declared_above));
 }
