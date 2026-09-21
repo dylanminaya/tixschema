@@ -41,6 +41,13 @@
 //!   naming this service off the socket seam `ts_ws_client()` publishes, drives the dispatcher
 //!   `ts_service()` publishes, and hands a refused notify's fault to a required `onFault`. A
 //!   bundle names `ts_ws_client()` before this, so the socket type it attaches to is declared.
+//! - `ts_ws_server()`: a `ws_rpc` server for Node that accepts connections — a context and an
+//!   idle-armed heartbeat per connection, a cancellation signal, and a hook that hands one socket
+//!   to a second service — wrapping `ts_ws_service()`'s attachment rather than re-emitting its
+//!   frame rules. A bundle names `ts_ws_client()`, then `ts_ws_service()`, then this.
+//! - `dart_definition()`: the Dart sibling of `ts_definition()` — every generated message's Dart
+//!   type, the fault kind and fields, and one [`dart_result`] pair per operation that answers
+//!   (published only where the `dart` feature is on).
 //! - `dart_http_client()`: the Dart sibling of `ts_http_client()` — the same `http_rest` seam and
 //!   per-operation client, in Dart, over the `dart` feature's own types and codec rather than Zod,
 //!   and throwing on failure rather than returning a result union (published only where the `dart`
@@ -94,6 +101,8 @@ mod client;
 #[cfg(feature = "dart")]
 mod dart_http_client;
 #[cfg(feature = "dart")]
+mod dart_result;
+#[cfg(feature = "dart")]
 mod dart_ws_client;
 mod fault;
 #[cfg(feature = "zod")]
@@ -105,6 +114,8 @@ mod result;
 mod service;
 #[cfg(feature = "zod")]
 mod ws_client;
+#[cfg(feature = "zod")]
+mod ws_server;
 #[cfg(feature = "zod")]
 mod ws_service;
 
@@ -147,9 +158,17 @@ pub fn emit(service: &ServiceDef, non_exhaustive: bool) -> TokenStream {
 /// types and codec this client's messages, successes and errors are written in.
 #[cfg(feature = "dart")]
 fn dart_seam(service: &ServiceDef) -> TokenStream {
+    let definition = dart_published(service);
     let client = dart_http_client::emit(service).join("\n\n");
     let ws_client = dart_ws_client::emit(service).join("\n\n");
     quote! {
+        #[doc = " Every Dart type this service publishes: the messages the macro declared for it,"]
+        #[doc = " the fault kind and fields, and one result pair per operation that answers — the"]
+        #[doc = " Dart twin of `ts_definition()`."]
+        pub fn dart_definition() -> String {
+            [#(#definition),*].join("\n\n")
+        }
+
         #[doc = " The service's generated Dart `http_rest` client: the transport seam, the"]
         #[doc = " exceptions a call throws, and the client class."]
         pub fn dart_http_client() -> String {
@@ -182,6 +201,7 @@ fn seam(service: &ServiceDef) -> TokenStream {
     let service_side = service::emit(service).join("\n\n");
     let ws_client = ws_client::emit(service).join("\n\n");
     let ws_service = ws_service::emit(service).join("\n\n");
+    let ws_server = ws_server::emit(service).join("\n\n");
     quote! {
         #[doc = " The service's generated TypeScript client: the transport seam it is bound"]
         #[doc = " to, the type its methods are declared on, and the factory that binds one."]
@@ -213,6 +233,14 @@ fn seam(service: &ServiceDef) -> TokenStream {
         #[doc = " `onFault`."]
         pub fn ts_ws_service() -> String {
             #ws_service.to_owned()
+        }
+
+        #[doc = " The service's generated `ws_rpc` server for Node: accepts sockets a listener"]
+        #[doc = " produced, builds a context per connection, answers probes, and hands one socket"]
+        #[doc = " to a second service. Wraps `ts_ws_service()`'s attachment, so a bundle names that"]
+        #[doc = " first."]
+        pub fn ts_ws_server() -> String {
+            #ws_server.to_owned()
         }
     }
 }
@@ -265,6 +293,33 @@ fn published(service: &ServiceDef) -> Vec<TokenStream> {
     collected
 }
 
+/// The Dart twin of [`published`], with no `fault::emit` counterpart: Dart names no sealed fault
+/// type of its own, so the result pair's `Fault` member and every fault helper reach for
+/// `{Service}FaultFields` directly.
+#[cfg(feature = "dart")]
+fn dart_published(service: &ServiceDef) -> Vec<TokenStream> {
+    use crate::features::dart::dart_module_ident;
+
+    let module = module_ident(service);
+    let mut collected = Vec::new();
+    for declared in &service.generated_messages {
+        let message_dart = dart_module_ident(&declared.ident.to_string(), declared.ident.span());
+        collected.push(quote! { #message_dart::dart_definition() });
+    }
+    let fields = fault_fields_typescript_name(&service.ident.to_string());
+    let fields_dart = dart_module_ident(&fields, service.ident.span());
+    let kind = format!("{}FaultKind", service.ident);
+    let kind_dart = dart_module_ident(&kind, service.ident.span());
+    collected.push(quote! { #module::#kind_dart::dart_definition() });
+    collected.push(quote! { #module::#fields_dart::dart_definition() });
+    collected.extend(
+        dart_result::emit(service)
+            .iter()
+            .map(|rendered| quote! { #rendered.to_owned() }),
+    );
+    collected
+}
+
 fn registry_rustdoc(service: &str) -> Vec<String> {
     let mut written = vec![
         format!(" What `{service}` publishes to TypeScript, in one place per artifact."),
@@ -294,11 +349,12 @@ fn seam_rustdoc(service: &str) -> Vec<String> {
         format!(
             " This build publishes no `{service}Schema::ts_client()`, no \
              `{service}Schema::ts_http_client()`, no `{service}Schema::ts_service()`, no \
-             `{service}Schema::ts_ws_client()`, and no `{service}Schema::ts_ws_service()`. All \
-             five parse a message against the schema `#[model_schema()]` writes for it, and only \
-             a build with tixschema's `zod` feature writes one — so rather than a client, a \
+             `{service}Schema::ts_ws_client()`, no `{service}Schema::ts_ws_service()`, and no \
+             `{service}Schema::ts_ws_server()`. The first five parse a message against the \
+             schema `#[model_schema()]` writes for it, and the sixth wraps the one that does; \
+             only a build with tixschema's `zod` feature writes one — so rather than a client, a \
              transport and a dispatcher that check nothing, this build publishes the service's \
-             types and leaves the five seam artifacts out. Add `features = [\"zod\"]` to the \
+             types and leaves the six seam artifacts out. Add `features = [\"zod\"]` to the \
              tixschema dependency to get them."
         ),
     ]

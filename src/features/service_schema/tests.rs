@@ -16,6 +16,8 @@ mod client_tests;
 #[cfg(feature = "dart")]
 mod dart_http_client_tests;
 #[cfg(feature = "dart")]
+mod dart_result_tests;
+#[cfg(feature = "dart")]
 mod dart_ws_client_tests;
 #[cfg(feature = "zod")]
 mod http_client_tests;
@@ -24,12 +26,16 @@ mod service_tests;
 #[cfg(feature = "zod")]
 mod ws_client_tests;
 #[cfg(feature = "zod")]
+mod ws_server_tests;
+#[cfg(feature = "zod")]
 mod ws_service_tests;
 
 #[cfg(feature = "zod")]
 use super::client;
 #[cfg(feature = "dart")]
 use super::dart_http_client;
+#[cfg(feature = "dart")]
+use super::dart_result;
 #[cfg(feature = "dart")]
 use super::dart_ws_client;
 #[cfg(feature = "zod")]
@@ -38,6 +44,8 @@ use super::http_client;
 use super::service;
 #[cfg(feature = "zod")]
 use super::ws_client;
+#[cfg(feature = "zod")]
+use super::ws_server;
 #[cfg(feature = "zod")]
 use super::ws_service;
 use super::{emit, result};
@@ -410,6 +418,11 @@ fn ws_service_of(source: &str) -> String {
     ws_service::emit(&parsed(source)).join("\n\n")
 }
 
+#[cfg(feature = "zod")]
+fn ws_server_of(source: &str) -> String {
+    ws_server::emit(&parsed(source)).join("\n\n")
+}
+
 #[cfg(feature = "dart")]
 fn dart_http_client_of(source: &str) -> String {
     dart_http_client::emit(&parsed(source)).join("\n\n")
@@ -418,6 +431,11 @@ fn dart_http_client_of(source: &str) -> String {
 #[cfg(feature = "dart")]
 fn dart_ws_client_of(source: &str) -> String {
     dart_ws_client::emit(&parsed(source)).join("\n\n")
+}
+
+#[cfg(feature = "dart")]
+fn dart_result_of(source: &str) -> Vec<String> {
+    dart_result::emit(&parsed(source))
 }
 
 fn parsed(source: &str) -> ServiceDef {
@@ -658,11 +676,12 @@ fn a_build_that_publishes_a_schema_publishes_the_client_and_the_dispatcher_that_
         "pub fn ts_service",
         "pub fn ts_ws_client",
         "pub fn ts_ws_service",
+        "pub fn ts_ws_server",
         "pub fn ts_definition",
     ] {
         assert!(
             rendered.contains(published),
-            "a build with a schema to parse against publishes all six artifacts. \
+            "a build with a schema to parse against publishes all seven artifacts. \
              Got: {rendered}"
         );
     }
@@ -687,6 +706,7 @@ fn a_build_that_publishes_no_schema_publishes_no_client_and_no_dispatcher() {
         "pub fn ts_service",
         "pub fn ts_ws_client",
         "pub fn ts_ws_service",
+        "pub fn ts_ws_server",
     ] {
         assert!(
             !rendered.contains(withheld),
@@ -722,7 +742,8 @@ fn a_build_that_publishes_no_client_says_on_the_registry_why_not() {
     for said in [
         "This build publishes no `UsageServiceSchema::ts_client()`, no \
          `UsageServiceSchema::ts_http_client()`, no `UsageServiceSchema::ts_service()`, no \
-         `UsageServiceSchema::ts_ws_client()`, and no `UsageServiceSchema::ts_ws_service()`.",
+         `UsageServiceSchema::ts_ws_client()`, no `UsageServiceSchema::ts_ws_service()`, and no \
+         `UsageServiceSchema::ts_ws_server()`.",
         "only a build with tixschema's `zod` feature writes one",
         "Add `features = [\\\"zod\\\"]` to the tixschema dependency to get them.",
     ] {
@@ -761,5 +782,51 @@ fn a_declared_message_brings_its_schema_along_with_its_type() {
     assert!(
         rendered.contains("ExpireCreditRequest :: zod_schema"),
         "the schema has no registration line of its own either. Got: {rendered}"
+    );
+}
+
+#[cfg(feature = "dart")]
+#[test]
+fn dart_definition_publishes_messages_then_kind_then_fields_then_results() {
+    let rendered = registration(MIXED_SERVICE);
+    let messages = [
+        rendered
+            .find("expire_credit_request_dart :: dart_definition")
+            .unwrap(),
+        rendered
+            .find("sweep_request_dart :: dart_definition")
+            .unwrap(),
+    ];
+    let kind = rendered
+        .find("usage_service_schema :: usage_service_fault_kind_dart :: dart_definition")
+        .unwrap();
+    let fields = rendered
+        .find("usage_service_schema :: usage_service_fault_fields_dart :: dart_definition")
+        .unwrap();
+    let results = rendered
+        .find("sealed class UsageServiceGetAvailableBalanceResult")
+        .unwrap();
+    assert!(
+        messages.iter().all(|&message| message < kind),
+        "got: {rendered}"
+    );
+    assert!(kind < fields, "got: {rendered}");
+    assert!(fields < results, "got: {rendered}");
+}
+
+#[cfg(feature = "dart")]
+#[test]
+fn dart_definition_asks_for_the_generated_messages_a_declared_message_is_registered_by_hand() {
+    let rendered = registration(MIXED_SERVICE);
+    for declared in ["expire_credit_request_dart", "sweep_request_dart"] {
+        assert!(
+            rendered.contains(&format!("{declared} :: dart_definition")),
+            "a message the macro declared reaches the bundle through the service's own line. \
+             Got: {rendered}"
+        );
+    }
+    assert!(
+        !rendered.contains("available_balance_request_dart"),
+        "the message the author declared is registered by the author, not here. Got: {rendered}"
     );
 }
