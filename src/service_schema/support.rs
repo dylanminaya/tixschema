@@ -372,6 +372,9 @@ fn streamed_answer_type() -> TokenStream {
 fn http_error_status_completeness(service: &ServiceDef) -> TokenStream {
     let checks = service.operations.iter().filter_map(|operation| {
         let binding = operation.http.as_ref()?;
+        if binding.error_status.is_empty() {
+            return None;
+        }
         let OperationOutcome::Reply {
             error,
             success: _success,
@@ -383,7 +386,7 @@ fn http_error_status_completeness(service: &ServiceDef) -> TokenStream {
         let arms = binding
             .error_status
             .iter()
-            .map(|(variant, code)| quote! { #error::#variant => #code, });
+            .map(|(variant, code)| quote! { #error::#variant { .. } => #code, });
         Some(quote! {
             #[doc = #summary]
             const _: fn(&#error) -> u16 = |reported| match reported {

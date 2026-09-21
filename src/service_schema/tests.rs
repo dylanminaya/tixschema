@@ -2811,6 +2811,37 @@ fn a_full_http_group_records_the_method_the_path_and_the_status_table() {
     assert!(matches!(binding.body_kind, BodyKind::Json));
 }
 
+/// An `http(...)` group naming no `error_status` table publishes no completeness check at all —
+/// there is nothing for it to be complete against, and the dispatcher answers every declared error
+/// at the fixed default-binding status instead. The same operation naming a table still publishes one.
+#[test]
+fn a_table_less_http_group_publishes_no_completeness_check() {
+    let table_less = expanded(
+        "pub trait GateService<Ctx> {
+            #[service_schema_op(http(method = \"GET\", path = \"/gates/{gate_id}\"))]
+            async fn check_gate(&self, ctx: &Ctx, gate_id: String) -> Result<GateStatus, GateError>;
+        }",
+    );
+    assert!(
+        !table_less.contains("const _ : fn (& GateError)"),
+        "an empty table has nothing to be complete against. Got: {table_less}"
+    );
+
+    let with_table = expanded(
+        "pub trait GateService<Ctx> {
+            #[service_schema_op(http(method = \"GET\", path = \"/gates/{gate_id}\", error_status(NotFound = 404)))]
+            async fn check_gate(&self, ctx: &Ctx, gate_id: String) -> Result<GateStatus, GateError>;
+        }",
+    );
+    assert!(
+        with_table.contains(
+            "const _ : fn (& GateError) -> u16 = | reported | match reported \
+             { GateError :: NotFound { .. } => 404u16 , } ;"
+        ),
+        "got: {with_table}"
+    );
+}
+
 /// An operation whose declared error type is a recorded `#[serde(untagged)]` enum and whose
 /// `error_status` table names two distinct statuses is refused: the TypeScript server has no
 /// variant to read a status from, since the enum's own `{Enum}$Variant` reader answers `""` for
@@ -3120,27 +3151,70 @@ fn the_service_module_carries_one_completeness_check_per_http_error_status() {
     assert!(
         body.contains(
             "const _ : fn (& GetVersionError) -> u16 = | reported | match reported \
-             { GetVersionError :: NotFound => 404u16 , GetVersionError :: VersionGone => 410u16 \
-             , } ;"
+             { GetVersionError :: NotFound { .. } => 404u16 , GetVersionError :: VersionGone \
+             { .. } => 410u16 , } ;"
         ),
         "got: {body}"
     );
 }
 
-/// Only a `Reply` operation naming `http(...)` carries a completeness check at all: `sweep` names
-/// no group and `purge_document` is one-way, so between the four operations exactly two checks
-/// are published, one per `Reply` operation that named a group — `create_document`'s carries no
-/// arms at all, its group having declared no `error_status`, which is rustc's own problem to
-/// raise against `DocumentError` rather than this crate's to guess at.
+/// Only a `Reply` operation naming `http(...)` with a non-empty `error_status` table carries a
+/// completeness check at all: `sweep` names no group, `purge_document` is one-way, and
+/// `create_document`'s group declares no `error_status`, so of the four operations exactly
+/// `get_version` publishes one.
 #[test]
-fn only_a_reply_operation_naming_http_carries_a_completeness_check() {
+fn only_a_reply_operation_naming_a_non_empty_table_carries_a_completeness_check() {
     let expanded =
         exec_service_schema(TokenStream::new(), declared(HTTP_SERVICE).to_token_stream());
     let body = module_body(expanded, "document_service_schema").to_string();
-    assert_eq!(body.matches("const _ : fn (&").count(), 2, "got: {body}");
+    assert_eq!(body.matches("const _ : fn (&").count(), 1, "got: {body}");
     assert!(
-        body.contains("const _ : fn (& DocumentError) -> u16 = | reported | match reported {"),
-        "got: {body}"
+        !body.contains("DocumentError"),
+        "create_document's group declares no error_status, so it publishes no check at all. \
+         Got: {body}"
+    );
+}
+
+/// A table entry naming a struct variant or a tuple variant is written with the brace pattern,
+/// the one spelling rustc accepts for a unit, a tuple and a struct variant alike — the macro never
+/// reads the variant's own shape.
+#[test]
+fn a_table_entry_naming_a_payload_variant_is_matched_with_braces() {
+    let struct_variant = expanded(
+        "pub trait ArchiveService<Ctx> {
+            #[service_schema_op(http(
+                method = \"GET\",
+                path = \"/archives/{archive_id}\",
+                error_status(NotFound = 404, Locked = 423),
+            ))]
+            async fn check_archive(&self, ctx: &Ctx, archive_id: String) -> Result<ArchiveStatus, ArchiveError>;
+        }",
+    );
+    assert!(
+        struct_variant.contains(
+            "const _ : fn (& ArchiveError) -> u16 = | reported | match reported \
+             { ArchiveError :: NotFound { .. } => 404u16 , ArchiveError :: Locked { .. } => \
+             423u16 , } ;"
+        ),
+        "got: {struct_variant}"
+    );
+
+    let tuple_variant = expanded(
+        "pub trait ArchiveService<Ctx> {
+            #[service_schema_op(http(
+                method = \"GET\",
+                path = \"/archives/{archive_id}/gone\",
+                error_status(Gone = 410),
+            ))]
+            async fn check_gone(&self, ctx: &Ctx, archive_id: String) -> Result<ArchiveStatus, GoneError>;
+        }",
+    );
+    assert!(
+        tuple_variant.contains(
+            "const _ : fn (& GoneError) -> u16 = | reported | match reported \
+             { GoneError :: Gone { .. } => 410u16 , } ;"
+        ),
+        "got: {tuple_variant}"
     );
 }
 
