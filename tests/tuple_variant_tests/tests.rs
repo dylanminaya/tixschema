@@ -1067,7 +1067,7 @@ fn test_optional_tuple_variant_element_json_schema_null_flavor() {
     #[model_schema()]
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub enum Row {
-        Link(Option<String>, Vec<usize>, String, Option<String>),
+        Link(Option<String>, Vec<isize>, String, Option<String>),
     }
 
     let variant = external_member(&Row::json_schema(), "Link");

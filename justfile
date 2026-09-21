@@ -10,10 +10,10 @@ install-tools:
     cargo install cargo-hack || echo "cargo-hack already installed"
     cargo install just || echo "just already installed"
 
-# Test all possible feature combinations (2^7 = 128 combinations)
+# Test all possible feature combinations (2^8 = 256 combinations)
 test:
     @echo "Testing all feature combinations..."
-    @echo "This will test 128 different feature combinations (2^7 with 7 features)"
+    @echo "This will test 256 different feature combinations (2^8 with 8 features)"
     cargo hack test --feature-powerset
     @echo "✅ All feature combinations passed!"
 
