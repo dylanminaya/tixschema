@@ -5895,7 +5895,7 @@ fn tagged_enum_variant_reader(
 
 /// The `{Enum}$Variant` reader for an externally tagged enum: a payload variant writes the wire
 /// name as the object's sole key, a unit variant as a bare string.
-#[cfg(feature = "typescript")]
+#[cfg(all(feature = "typescript", feature = "serde"))]
 fn externally_tagged_enum_variant_reader(item_name: &str, pairs: &[(String, String)]) -> String {
     format!(
         "/** The Rust variant name `value` carries, or \"\" where it carries none. */\n\
@@ -5906,7 +5906,7 @@ fn externally_tagged_enum_variant_reader(item_name: &str, pairs: &[(String, Stri
 
 /// The `{Enum}$Variant` reader for an untagged enum: no serde form carries the variant's own name,
 /// so there is nothing to read.
-#[cfg(feature = "typescript")]
+#[cfg(all(feature = "typescript", feature = "serde"))]
 fn untagged_enum_variant_reader(item_name: &str) -> String {
     format!(
         "/** The Rust variant name `value` carries, or \"\" where it carries none. */\n\
@@ -5989,7 +5989,7 @@ fn tagged_ts_definition_method(
 
 /// The externally-tagged `ts_definition()` method, its reader computed and appended in one call —
 /// kept off `process_externally_tagged_enum` so that function stays under the line lint.
-#[cfg(feature = "typescript")]
+#[cfg(all(feature = "typescript", feature = "serde"))]
 fn externally_tagged_ts_definition_method(
     docs: &str,
     item_name: &str,
@@ -6030,7 +6030,7 @@ fn process_plain_enum(
         AliasKind::EnumMembers,
         Surface::enumerated(),
     );
-    #[cfg(any(feature = "typescript", feature = "zod"))]
+    #[cfg(feature = "zod")]
     let rust_ident = name.to_string();
 
     #[cfg(any(feature = "typescript", feature = "zod"))]
