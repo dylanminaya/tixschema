@@ -143,8 +143,9 @@ mod typescript {
             ("External", External::<String>::ts_definition()),
             ("Untagged", Untagged::<String>::ts_definition()),
         ] {
-            // The untagged form takes an unread `_value`, since it has nothing to read.
-            let parameter = if flavour == "Untagged" {
+            // The untagged form takes an unread `_value`, since it has nothing to read — but only
+            // `serde` reads `#[serde(untagged)]` at all; without it, Untagged expands tagged.
+            let parameter = if cfg!(feature = "serde") && flavour == "Untagged" {
                 "_value"
             } else {
                 "value"
