@@ -15,6 +15,7 @@ use super::{
     emitted_trait, exec_service_schema, multipart_envelope_refusal, stream_envelope_refusal,
 };
 use crate::model_schema::exec_model_schema;
+use crate::utils::record_untagged_enum;
 use core::mem::take;
 use proc_macro2::{Delimiter, Group, Span, TokenStream, TokenTree};
 use quote::{ToTokens as _, quote};
@@ -2808,6 +2809,54 @@ fn a_full_http_group_records_the_method_the_path_and_the_status_table() {
         ]
     );
     assert!(matches!(binding.body_kind, BodyKind::Json));
+}
+
+/// An operation whose declared error type is a recorded `#[serde(untagged)]` enum and whose
+/// `error_status` table names two distinct statuses is refused: the TypeScript server has no
+/// variant to read a status from, since the enum's own `{Enum}$Variant` reader answers `""` for
+/// every value.
+#[test]
+fn an_untagged_error_type_mapped_to_two_statuses_is_refused() {
+    record_untagged_enum("WidgetErrorUntaggedProbe");
+    assert_eq!(
+        refusals(
+            "pub trait WidgetService<Ctx> {
+                #[service_schema_op(http(
+                    method = \"GET\",
+                    path = \"/widgets/{widget_id}\",
+                    error_status(Gone = 410, NotFound = 404),
+                ))]
+                async fn get_widget(&self, ctx: &Ctx, widget_id: String) -> Result<Widget, WidgetErrorUntaggedProbe>;
+            }"
+        ),
+        vec![
+            "service_schema: operation `get_widget`: `WidgetErrorUntaggedProbe` is \
+             `#[serde(untagged)]`, so no variant can be read off its value to pick a status\n       \
+             give the enum a tag or map every variant to one status"
+        ],
+        "an untagged error's own reader carries no variant name to switch on"
+    );
+}
+
+/// The same untagged error type mapped to a *single* status earns no refusal: every variant
+/// answers the same status regardless of which one matched, so nothing needs reading.
+#[test]
+fn an_untagged_error_type_mapped_to_one_status_is_not_refused() {
+    record_untagged_enum("WidgetErrorUntaggedSingleProbe");
+    assert_eq!(
+        refusals(
+            "pub trait WidgetService<Ctx> {
+                #[service_schema_op(http(
+                    method = \"GET\",
+                    path = \"/widgets/{widget_id}\",
+                    error_status(Gone = 410, NotFound = 410),
+                ))]
+                async fn get_widget(&self, ctx: &Ctx, widget_id: String) -> Result<Widget, WidgetErrorUntaggedSingleProbe>;
+            }"
+        ),
+        Vec::<String>::new(),
+        "one distinct status needs no variant read, mapped from either variant"
+    );
 }
 
 /// A `body = "bytes"` group whose reply already answers the fixed `(Vec<u8>, String)` shape

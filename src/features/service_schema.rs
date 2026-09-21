@@ -32,6 +32,10 @@
 //! - `ts_http_client()`: the `http_rest` transport seam — a plain-terms request in, response out,
 //!   nothing here naming the library that finally carries the call — the client type, and the
 //!   factory that binds one.
+//! - `ts_http_service()`: an `http_rest` server — the route table, the request and response
+//!   shapes, a fault handler with the Rust transport's own defaults, and a dispatcher that matches,
+//!   assembles the message the way the Rust dispatcher does, and drives `ts_service()`'s own
+//!   `create{Service}Dispatcher`. Names no web framework; the hosting application binds it.
 //! - `ts_service()`: the interface an implementation satisfies in full, the outcome types it
 //!   answers with, and the dispatcher factory.
 //! - `ts_ws_client()`: the `ws_rpc` transport seam — a socket seam a platform `WebSocket` satisfies
@@ -107,6 +111,8 @@ mod dart_ws_client;
 mod fault;
 #[cfg(feature = "zod")]
 mod http_client;
+#[cfg(feature = "zod")]
+mod http_service;
 #[cfg(feature = "zod")]
 mod message;
 mod result;
@@ -198,6 +204,7 @@ fn dart_seam(_service: &ServiceDef) -> TokenStream {
 fn seam(service: &ServiceDef) -> TokenStream {
     let client = client::emit(service).join("\n\n");
     let http_client = http_client::emit(service).join("\n\n");
+    let http_service = http_service::emit(service).join("\n\n");
     let service_side = service::emit(service).join("\n\n");
     let ws_client = ws_client::emit(service).join("\n\n");
     let ws_service = ws_service::emit(service).join("\n\n");
@@ -213,6 +220,14 @@ fn seam(service: &ServiceDef) -> TokenStream {
         #[doc = " and response seam, the client type, and the factory that binds one to it."]
         pub fn ts_http_client() -> String {
             #http_client.to_owned()
+        }
+
+        #[doc = " The service's generated `http_rest` TypeScript server: the route table, the"]
+        #[doc = " request and response shapes, a fault handler with the Rust transport's own"]
+        #[doc = " defaults, and the dispatcher that matches, assembles the message the way the"]
+        #[doc = " Rust dispatcher does, and drives `create{Service}Dispatcher`."]
+        pub fn ts_http_service() -> String {
+            #http_service.to_owned()
         }
 
         #[doc = " The service's implementable TypeScript interface, the outcome types an"]
@@ -348,14 +363,14 @@ fn seam_rustdoc(service: &str) -> Vec<String> {
         String::new(),
         format!(
             " This build publishes no `{service}Schema::ts_client()`, no \
-             `{service}Schema::ts_http_client()`, no `{service}Schema::ts_service()`, no \
-             `{service}Schema::ts_ws_client()`, no `{service}Schema::ts_ws_service()`, and no \
-             `{service}Schema::ts_ws_server()`. The first five parse a message against the \
-             schema `#[model_schema()]` writes for it, and the sixth wraps the one that does; \
-             only a build with tixschema's `zod` feature writes one — so rather than a client, a \
-             transport and a dispatcher that check nothing, this build publishes the service's \
-             types and leaves the six seam artifacts out. Add `features = [\"zod\"]` to the \
-             tixschema dependency to get them."
+             `{service}Schema::ts_http_client()`, no `{service}Schema::ts_http_service()`, no \
+             `{service}Schema::ts_service()`, no `{service}Schema::ts_ws_client()`, no \
+             `{service}Schema::ts_ws_service()`, and no `{service}Schema::ts_ws_server()`. The \
+             first six parse a message against the schema `#[model_schema()]` writes for it, \
+             and the seventh wraps the one that does; only a build with tixschema's `zod` \
+             feature writes one — so rather than a client, a transport and a dispatcher that \
+             check nothing, this build publishes the service's types and leaves the seven seam \
+             artifacts out. Add `features = [\"zod\"]` to the tixschema dependency to get them."
         ),
     ]
 }

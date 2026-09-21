@@ -91,7 +91,7 @@ fn result_type(service: &str, operation: &OperationDef) -> Option<String> {
 /// `stream_success_dart_type`. `success` is read only for the header types after the first slot;
 /// the first slot is always the fixed streamed record; `StreamedAnswer` carries no
 /// `#[model_schema()]` to resolve a TypeScript type from.
-fn stream_success_ts_type(shape: &HttpShape, success: &Type) -> String {
+pub fn stream_success_ts_type(shape: &HttpShape, success: &Type) -> String {
     if shape.header_out.is_empty() {
         return STREAMED_ANSWER_TS_TYPE.to_owned();
     }
