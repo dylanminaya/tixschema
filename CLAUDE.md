@@ -118,6 +118,11 @@ just ci
    - Example code is inserted into generated `schema_example()` method
    - Compiler validates example code at compile time
 
+7. **Service Schema Accessors** ([features/service_schema.rs](src/features/service_schema.rs))
+   - `ts_http_service()`: the TypeScript route table and request dispatcher for `http_rest`, mirroring the Rust `dispatch`/`ROUTES` pair
+   - `ts_ws_server()`: the TypeScript connection-accepting WebSocket server for Node, wrapping the existing single-socket dispatcher attachment
+   - `dart_definition()`: every Dart type a service publishes -- its messages, fault type, and one sealed `{Service}{Operation}Result` pair per reply operation
+
 ### Key Data Structures
 
 **FieldDef** (central type representation):
