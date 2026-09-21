@@ -11315,6 +11315,32 @@ fn validate_as_number_flag(field_type: &FieldDefType, flag_set: bool) -> Result<
     Ok(())
 }
 
+/// `as_number` promises every surface an epoch-milliseconds number; this is the serde hook that
+/// makes the Rust side keep that promise. Held back where the author already reads the field
+/// through a hook of their own, which serde admits only one of.
+#[cfg(all(feature = "serde", feature = "chrono"))]
+fn as_number_serde_hook(field: &Field, field_def: &FieldDef) -> Option<syn::Attribute> {
+    let as_number = field_def
+        .model_schema_prop_meta
+        .as_ref()
+        .is_some_and(|meta| meta.as_number);
+    if !as_number || has_serde_read_hook(&field.attrs) {
+        return None;
+    }
+    let module = if field_def.is_optional() {
+        "chrono::serde::ts_milliseconds_option"
+    } else {
+        "chrono::serde::ts_milliseconds"
+    };
+    let path_lit = syn::LitStr::new(module, proc_macro2::Span::call_site());
+    Some(syn::parse_quote! { #[serde(with = #path_lit)] })
+}
+
+#[cfg(all(feature = "serde", not(feature = "chrono")))]
+const fn as_number_serde_hook(_field: &Field, _field_def: &FieldDef) -> Option<syn::Attribute> {
+    None
+}
+
 /// Rejects `ts_optional` where the member has no key for it to make optional. A positional slot
 /// writes no key at all, and one a serde attribute takes out of both of serde's directions is
 /// described on no surface, so on either the flag asks for a spelling nothing emits.
@@ -12018,6 +12044,11 @@ fn process_field(
             None => hook,
         });
         injected_attrs.extend(attrs);
+    }
+
+    #[cfg(feature = "serde")]
+    if let Some(attr) = as_number_serde_hook(field, &field_def) {
+        injected_attrs.push(attr);
     }
 
     deferred_attrs.push(injected_attrs);
