@@ -7,9 +7,6 @@
 #![cfg(feature = "dart")]
 
 use super::runtime::ran;
-use super::tests::conversation_client_service_schema::{
-    conversation_client_service_fault_fields_dart, conversation_client_service_fault_kind_dart,
-};
 use super::tests::{
     ConversationClientServiceSchema, conversation_id_dart, window_error_dart, window_page_dart,
     window_request_dart,
@@ -64,8 +61,7 @@ fn module() -> String {
         window_request_dart::dart_definition(),
         window_page_dart::dart_definition(),
         window_error_dart::dart_definition(),
-        conversation_client_service_fault_fields_dart::dart_definition(),
-        conversation_client_service_fault_kind_dart::dart_definition(),
+        ConversationClientServiceSchema::dart_definition(),
         ConversationClientServiceSchema::dart_http_client(),
         DRIVER.to_owned(),
     ]
@@ -76,6 +72,49 @@ fn module() -> String {
 fn sent() -> Option<Vec<serde_json::Value>> {
     let wrote = ran("dart", RUNTIME_VAR, "dart", "client.dart", &module())?;
     Some(serde_json::from_str(wrote.trim()).unwrap())
+}
+
+#[test]
+fn dart_definition_publishes_the_result_pair_and_no_pair_for_the_one_way_operation() {
+    let written = ConversationClientServiceSchema::dart_definition();
+    assert!(
+        written.contains(
+            "sealed class ConversationClientServiceWindowResult {\n  \
+             const ConversationClientServiceWindowResult();\n}"
+        ),
+        "got: {written}"
+    );
+    assert!(
+        written.contains(
+            "final class ConversationClientServiceWindowResultOk extends \
+             ConversationClientServiceWindowResult {\n  \
+             const ConversationClientServiceWindowResultOk(this.value);\n  \
+             final WindowPage value;\n}"
+        ),
+        "got: {written}"
+    );
+    assert!(
+        written.contains(
+            "final class ConversationClientServiceWindowResultOperation extends \
+             ConversationClientServiceWindowResult {\n  \
+             const ConversationClientServiceWindowResultOperation(this.error);\n  \
+             final WindowError error;\n}"
+        ),
+        "got: {written}"
+    );
+    assert!(
+        written.contains(
+            "final class ConversationClientServiceWindowResultFault extends \
+             ConversationClientServiceWindowResult {\n  \
+             const ConversationClientServiceWindowResultFault(this.fault);\n  \
+             final ConversationClientServiceFaultFields fault;\n}"
+        ),
+        "got: {written}"
+    );
+    assert!(
+        !written.contains("PurgeConversationResult"),
+        "purge_conversation is one-way and declared no reply to join into a pair. Got: {written}"
+    );
 }
 
 #[test]

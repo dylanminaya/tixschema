@@ -252,19 +252,26 @@ fn stream_success_dart_type(shape: &HttpShape, success: &Type) -> String {
 }
 
 fn return_type(operation: &OperationDef, shape: &HttpShape) -> String {
+    format!("Future<{}>", dart_success_type(operation, shape))
+}
+
+/// The Dart type `return_type` wraps in `Future<...>`. Shared with the result pair's `Ok` member
+/// ([`super::dart_result`]) so the client and the pair cannot name two different types for one
+/// operation's success.
+pub(super) fn dart_success_type(operation: &OperationDef, shape: &HttpShape) -> String {
     match &operation.outcome {
-        OperationOutcome::OneWay => "Future<void>".to_owned(),
+        OperationOutcome::OneWay => "void".to_owned(),
         OperationOutcome::Reply {
             success,
             error: _error,
         } => match shape.body_kind {
-            BodyKind::Bytes => format!("Future<{}>", dart_type_of(success)),
-            BodyKind::Stream => format!("Future<{}>", stream_success_dart_type(shape, success)),
+            BodyKind::Bytes => dart_type_of(success),
+            BodyKind::Stream => stream_success_dart_type(shape, success),
             BodyKind::Json | BodyKind::Multipart => {
                 if shape.header_out.is_empty() && is_unit_type(success) {
-                    "Future<void>".to_owned()
+                    "void".to_owned()
                 } else {
-                    format!("Future<{}>", dart_type_of(success))
+                    dart_type_of(success)
                 }
             }
         },
@@ -972,8 +979,9 @@ fn message_dart_typename(operation: &OperationDef) -> String {
 
 /// `ty`'s own Dart type name, read through the same `FieldDef` walk every field's type goes
 /// through — so a reference to a sibling `#[model_schema()]` type resolves to its published Dart
-/// name exactly as it would inside an ordinary field.
-fn dart_type_of(ty: &Type) -> String {
+/// name exactly as it would inside an ordinary field. `pub(super)`: [`super::dart_result`] reads a
+/// declared error's Dart type the same way.
+pub(super) fn dart_type_of(ty: &Type) -> String {
     dart_typename(&get_field_def("value", ty, ""))
 }
 
