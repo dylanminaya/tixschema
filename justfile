@@ -99,8 +99,8 @@ typecheck-ts:
 # object as the constant `[object Object]`, so only running the client shows which URL comes out.
 # The groups inside `cargo test` stand down when they find no runtime, saying so on stderr. This
 # recipe refuses to stand down — it resolves each runtime up front and names it for the tests,
-# where a named runtime that cannot be started is a failure. Set TIXSCHEMA_NODE or TIXSCHEMA_DART
-# to use one that is not on PATH.
+# where a named runtime that cannot be started is a failure. Set TIXSCHEMA_NODE, TIXSCHEMA_DART or
+# TIXSCHEMA_SWIFT to use one that is not on PATH.
 test-emitted:
     @command -v "${TIXSCHEMA_NODE:-node}" >/dev/null 2>&1 || { echo "No node: put \`node\` on PATH, or set TIXSCHEMA_NODE to one." >&2; exit 1; }
     @echo "Running the emitted TypeScript client with $(command -v "${TIXSCHEMA_NODE:-node}")..."
@@ -114,6 +114,9 @@ test-emitted:
     @command -v "${TIXSCHEMA_DART:-dart}" >/dev/null 2>&1 || { echo "No Dart SDK: put \`dart\` on PATH, or set TIXSCHEMA_DART to one." >&2; exit 1; }
     @echo "Running the emitted Dart client with $(command -v "${TIXSCHEMA_DART:-dart}")..."
     TIXSCHEMA_DART="$(command -v "${TIXSCHEMA_DART:-dart}")" cargo test --all-features --test service_schema_emitted_client_tests run_dart
+    @command -v "${TIXSCHEMA_SWIFT:-swift}" >/dev/null 2>&1 || { echo "No Swift toolchain: put \`swift\` on PATH, or set TIXSCHEMA_SWIFT to one." >&2; exit 1; }
+    @echo "Running the emitted Swift client with $(command -v "${TIXSCHEMA_SWIFT:-swift}")..."
+    TIXSCHEMA_SWIFT="$(command -v "${TIXSCHEMA_SWIFT:-swift}")" cargo test --all-features --test service_schema_emitted_client_tests run_swift
     @echo "✅ The emitted clients build the URLs they claim to!"
 
 # Check code without running tests

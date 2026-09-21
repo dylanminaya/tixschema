@@ -2,6 +2,102 @@
 //! is the author's own struct, bound to a path with one placeholder, carrying one field the path
 //! does not bind.
 
+/// The Swift codec spike's own rows (task 30), declared once so `run_swift.rs` can round-trip
+/// each through the emitted `swift_definition()` text and this file's own `serde_json` writes the
+/// same JSON against.
+#[cfg(feature = "swift")]
+pub mod swift_codec_fixture {
+    use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
+    use tixschema::model_schema;
+
+    /// Row 1: a renamed field, an omitted optional, a present optional, and a `nullable` field
+    /// that must still write its key as `null`.
+    #[model_schema()]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct CodecOptionsRow {
+        #[model_schema_prop(nullable)]
+        pub nullable_field: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub omitted_optional: Option<i32>,
+        pub plain_field: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub present_optional: Option<i32>,
+    }
+
+    /// Row 2a: externally tagged (serde's default once a variant carries data).
+    #[model_schema()]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub enum CodecExternalTagged {
+        Bar(i64),
+        Baz,
+        Foo { a: String },
+    }
+
+    /// Row 2b: internally tagged (`tag = "..."`, no `content`).
+    #[model_schema()]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[serde(tag = "type")]
+    pub enum CodecInternalTagged {
+        Foo { a: String },
+        Reset,
+    }
+
+    /// Row 2c: adjacently tagged (`tag = "...", content = "..."`).
+    #[model_schema()]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[serde(tag = "type", content = "value")]
+    pub enum CodecAdjacentTagged {
+        Cleared,
+        Flag(bool),
+    }
+
+    /// Row 3: untagged — the decode tries each member in declaration order.
+    #[model_schema()]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[serde(untagged)]
+    pub enum CodecUntagged {
+        Count { count: i64 },
+        Text { text: String },
+    }
+
+    /// Row 4: a tuple field, which Swift has no native `Codable` for and emits as a wrapper
+    /// struct over an unkeyed container.
+    #[model_schema()]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CodecTuplePoint {
+        pub label: String,
+        pub pair: (String, u32),
+    }
+
+    /// Row 5: a generic struct, bound through conditional conformance.
+    #[model_schema(default_types(T = String))]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CodecEnvelope<T> {
+        pub note: String,
+        pub value: T,
+    }
+
+    /// A plain enum used as a non-string map key below.
+    #[model_schema()]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    pub enum CodecPrimary {
+        Primary,
+        Secondary,
+    }
+
+    /// Row 6: a numeric and an enum map key, each needing the keyed-wrapper codec Swift's native
+    /// `Dictionary` conformance does not give a non-`String`/`Int` key. A `bool`-keyed map is
+    /// deliberately not exercised here: its emitted decode does not compile.
+    #[model_schema()]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CodecMapKeys {
+        pub counters: HashMap<u32, String>,
+        pub tiers: HashMap<CodecPrimary, String>,
+    }
+}
+
 use core::future::{Future, ready};
 use core::pin::pin;
 use core::task::{Context as PollContext, Poll, Waker};
