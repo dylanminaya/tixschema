@@ -361,7 +361,7 @@ fn swift_map_key_scalar(key: &FieldDef) -> String {
 fn swift_map_key_codec(key: &FieldDef) -> (String, String) {
     match &key.field_type {
         FieldDefType::Boolean => (
-            "(wireKey == \"true\")".to_owned(),
+            "(wireKey == \"true\" ? true : wireKey == \"false\" ? false : nil)".to_owned(),
             "(key ? \"true\" : \"false\")".to_owned(),
         ),
         FieldDefType::SiblingType(name, _) => {
@@ -673,6 +673,20 @@ fn swift_resolve(
 /// [`swift_resolve`]'s type alone, for a caller that has no use for the shape.
 fn swift_full_real_type(field: &FieldDef, name_hint: &str, aux: &mut Vec<String>) -> String {
     swift_resolve(field, name_hint, aux).0
+}
+
+/// The Swift type name a field earns, together with any auxiliary declarations the reference
+/// needs of its own (a tuple-slot struct, a non-string map-key wrapper) — exposed for a caller
+/// outside this module that names a type without declaring it, mirroring
+/// `crate::features::dart::dart_typename`. A `#[service_schema]` client reaches for this to name
+/// an operation's message, success or error type by the same Swift spelling its own declaration
+/// publishes. Gated exactly as `crate::features::service_schema` is — the one caller — so a build
+/// that never compiles that module never carries this as dead code either.
+#[cfg(all(feature = "serde", feature = "typescript"))]
+pub fn swift_reference_type(field: &FieldDef, name_hint: &str) -> (String, Vec<String>) {
+    let mut aux = Vec::new();
+    let real_type = swift_full_real_type(field, name_hint, &mut aux);
+    (real_type, aux)
 }
 
 /// The wire counterpart of [`swift_full_real_type`]'s array wrapping, without the field's own

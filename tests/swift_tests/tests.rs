@@ -490,7 +490,13 @@ fn a_boolean_map_key_earns_a_keyed_wrapper() {
         swift.contains("public let byBool: [Bool: String]"),
         "got: {swift}"
     );
-    assert!(swift.contains("wireKey == \"true\""), "got: {swift}");
+    assert!(
+        swift.contains(
+            "guard let key = (wireKey == \"true\" ? true : wireKey == \"false\" ? false : nil) else"
+        ),
+        "the decode expression must be an Optional Bool, since it fills a `guard let` — an \
+         unrecognized key text is refused exactly like a bad numeric key. Got: {swift}"
+    );
 }
 
 #[test]
