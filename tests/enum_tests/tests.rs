@@ -260,6 +260,31 @@ fn test_plain_enum_ts_definition_serde_style() {
     assert!(zod_schema.contains("z.enum([\"active\", \"inactive\", \"pending\", \"suspended\"])"));
 }
 
+/// A unit-only enum's reader switches on the bare string itself: no tag, so no object access.
+#[test]
+#[cfg(all(feature = "typescript", feature = "serde"))]
+fn test_plain_enum_variant_reader() {
+    let ts = UserStatus::ts_definition();
+
+    assert!(
+        ts.contains("export function UserStatus$Variant(value: unknown): string {"),
+        "Got: {ts}"
+    );
+    assert!(ts.contains("switch (value) {"), "Got: {ts}");
+    assert!(
+        ts.contains("case \"active\": return \"Active\";"),
+        "Got: {ts}"
+    );
+    assert!(
+        ts.contains("case \"suspended\": return \"Suspended\";"),
+        "Got: {ts}"
+    );
+    assert!(
+        !ts.contains("as {"),
+        "a bare string reader does no object access. Got: {ts}"
+    );
+}
+
 #[test]
 #[cfg(all(feature = "typescript", not(feature = "serde"), feature = "zod"))]
 fn test_plain_enum_ts_definition_not_serde_style() {
