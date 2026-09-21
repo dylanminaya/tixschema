@@ -13,7 +13,7 @@
 //!
 //! A one-way operation declared no reply and therefore no pair, mirroring [`super::result`].
 
-use super::dart_http_client::{dart_success_type, dart_type_of};
+use super::dart_http_client::{carries_no_value, dart_success_type, dart_type_of};
 use super::result::result_name;
 use crate::service_schema::parse::{HttpShape, OperationDef, OperationOutcome, ServiceDef};
 use crate::service_schema::support::fault_fields_typescript_name;
@@ -37,7 +37,15 @@ fn result_pair(named: &str, operation: &OperationDef) -> Option<String> {
     };
     let published = result_name(named, operation)?;
     let shape = HttpShape::of(operation);
-    let value = dart_success_type(operation, &shape);
+    let ok_member = if carries_no_value(operation, &shape) {
+        format!("final class {published}Ok extends {published} {{\n  const {published}Ok();\n}}")
+    } else {
+        let value = dart_success_type(operation, &shape);
+        format!(
+            "final class {published}Ok extends {published} {{\n  \
+             const {published}Ok(this.value);\n  final {value} value;\n}}"
+        )
+    };
     let failure = dart_type_of(error);
     let fault = fault_fields_typescript_name(named);
     let ident = &operation.ident;
@@ -46,8 +54,7 @@ fn result_pair(named: &str, operation: &OperationDef) -> Option<String> {
          never\n\
          /// declared.\n\
          sealed class {published} {{\n  const {published}();\n}}\n\n\
-         final class {published}Ok extends {published} {{\n  \
-         const {published}Ok(this.value);\n  final {value} value;\n}}\n\n\
+         {ok_member}\n\n\
          final class {published}Operation extends {published} {{\n  \
          const {published}Operation(this.error);\n  final {failure} error;\n}}\n\n\
          final class {published}Fault extends {published} {{\n  \

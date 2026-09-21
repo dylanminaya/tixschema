@@ -4,7 +4,7 @@
 //! tests read structure, the same way `dart_http_client_tests` reads the `http_rest` sibling's own
 //! output: a substring that must appear, and a name that must not.
 
-use super::{DART_WS_SERVICE, dart_ws_client_of};
+use super::{DART_UNIT_SUCCESS_HTTP_SERVICE, DART_WS_SERVICE, dart_ws_client_of};
 
 /// The body of one method or dispatch arm, from its own start marker through the closing brace of
 /// whatever follows — mirrors `dart_http_client_tests`'s own `method_body`.
@@ -416,4 +416,15 @@ fn the_fault_helpers_reuse_the_generated_fault_fields_and_kind() {
             "helper `{helper}` should report `{kind}`. Got: {written}"
         );
     }
+}
+
+#[test]
+fn a_unit_success_answers_the_field_less_ok_member() {
+    let written = dart_ws_client_of(DART_UNIT_SUCCESS_HTTP_SERVICE);
+    let arm = body_from(&written, "if (reply['ok'] == true) {");
+    assert!(
+        arm.contains("return PingClientServicePingResultOk();"),
+        "got: {arm}"
+    );
+    assert!(!arm.contains("ResultOk(null)"), "got: {arm}");
 }

@@ -3,7 +3,7 @@
 
 use super::{
     DART_BYTES_HEADER_OUT_SERVICE, DART_SINGLE_PLACEHOLDER_HTTP_SERVICE, DART_STREAM_HTTP_SERVICE,
-    dart_result_of,
+    DART_UNIT_SUCCESS_HTTP_SERVICE, dart_result_of,
 };
 
 #[test]
@@ -101,4 +101,17 @@ fn a_bytes_operation_with_header_out_shares_its_success_type_with_the_client() {
         written.contains("final (List<int>, String, String) value;"),
         "got: {written}"
     );
+}
+
+#[test]
+fn a_unit_success_gets_a_field_less_ok_member() {
+    let written = dart_result_of(DART_UNIT_SUCCESS_HTTP_SERVICE).join("\n\n");
+    assert!(
+        written.contains(
+            "final class PingClientServicePingResultOk extends PingClientServicePingResult {\n  \
+             const PingClientServicePingResultOk();\n}"
+        ),
+        "got: {written}"
+    );
+    assert!(!written.contains("void value"), "got: {written}");
 }

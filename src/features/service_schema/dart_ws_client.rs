@@ -370,7 +370,7 @@ fn reply_decode_stmt(
 
 fn success_decode_block(result: &str, fn_prefix: &str, wire: &str, success: &Type) -> String {
     if is_unit_type(success) {
-        return format!("      return {result}Ok(null);\n");
+        return format!("      return {result}Ok();\n");
     }
     let success_ty = dart_type_of(success);
     format!(
