@@ -16,6 +16,8 @@ mod client_tests;
 #[cfg(feature = "dart")]
 mod dart_http_client_tests;
 #[cfg(feature = "dart")]
+mod dart_result_tests;
+#[cfg(feature = "dart")]
 mod dart_ws_client_tests;
 #[cfg(feature = "zod")]
 mod http_client_tests;
@@ -32,6 +34,8 @@ mod ws_service_tests;
 use super::client;
 #[cfg(feature = "dart")]
 use super::dart_http_client;
+#[cfg(feature = "dart")]
+use super::dart_result;
 #[cfg(feature = "dart")]
 use super::dart_ws_client;
 #[cfg(feature = "zod")]
@@ -378,6 +382,16 @@ const DART_SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
     }
 ";
 
+/// A reply operation whose success is `()` — nothing rides in the pair's `Ok` member or the
+/// clients' unit arm.
+#[cfg(feature = "dart")]
+const DART_UNIT_SUCCESS_HTTP_SERVICE: &str = "
+    pub trait PingClientService<Ctx> {
+        #[service_schema_op(http(method = \"POST\", path = \"/v1/ping\"))]
+        async fn ping(&self, ctx: &Ctx, req: PingRequest) -> Result<(), PingError>;
+    }
+";
+
 /// A service exercising both operation shapes `ws_rpc` answers for: a reply operation over a
 /// `Named` message, and a one-way operation. Named for the design's own running example.
 #[cfg(feature = "dart")]
@@ -427,6 +441,11 @@ fn dart_http_client_of(source: &str) -> String {
 #[cfg(feature = "dart")]
 fn dart_ws_client_of(source: &str) -> String {
     dart_ws_client::emit(&parsed(source)).join("\n\n")
+}
+
+#[cfg(feature = "dart")]
+fn dart_result_of(source: &str) -> Vec<String> {
+    dart_result::emit(&parsed(source))
 }
 
 fn parsed(source: &str) -> ServiceDef {
@@ -773,5 +792,51 @@ fn a_declared_message_brings_its_schema_along_with_its_type() {
     assert!(
         rendered.contains("ExpireCreditRequest :: zod_schema"),
         "the schema has no registration line of its own either. Got: {rendered}"
+    );
+}
+
+#[cfg(feature = "dart")]
+#[test]
+fn dart_definition_publishes_messages_then_kind_then_fields_then_results() {
+    let rendered = registration(MIXED_SERVICE);
+    let messages = [
+        rendered
+            .find("expire_credit_request_dart :: dart_definition")
+            .unwrap(),
+        rendered
+            .find("sweep_request_dart :: dart_definition")
+            .unwrap(),
+    ];
+    let kind = rendered
+        .find("usage_service_schema :: usage_service_fault_kind_dart :: dart_definition")
+        .unwrap();
+    let fields = rendered
+        .find("usage_service_schema :: usage_service_fault_fields_dart :: dart_definition")
+        .unwrap();
+    let results = rendered
+        .find("sealed class UsageServiceGetAvailableBalanceResult")
+        .unwrap();
+    assert!(
+        messages.iter().all(|&message| message < kind),
+        "got: {rendered}"
+    );
+    assert!(kind < fields, "got: {rendered}");
+    assert!(fields < results, "got: {rendered}");
+}
+
+#[cfg(feature = "dart")]
+#[test]
+fn dart_definition_asks_for_the_generated_messages_a_declared_message_is_registered_by_hand() {
+    let rendered = registration(MIXED_SERVICE);
+    for declared in ["expire_credit_request_dart", "sweep_request_dart"] {
+        assert!(
+            rendered.contains(&format!("{declared} :: dart_definition")),
+            "a message the macro declared reaches the bundle through the service's own line. \
+             Got: {rendered}"
+        );
+    }
+    assert!(
+        !rendered.contains("available_balance_request_dart"),
+        "the message the author declared is registered by the author, not here. Got: {rendered}"
     );
 }

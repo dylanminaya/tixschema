@@ -45,13 +45,16 @@
 //!   idle-armed heartbeat per connection, a cancellation signal, and a hook that hands one socket
 //!   to a second service — wrapping `ts_ws_service()`'s attachment rather than re-emitting its
 //!   frame rules. A bundle names `ts_ws_client()`, then `ts_ws_service()`, then this.
+//! - `dart_definition()`: the Dart sibling of `ts_definition()` — every generated message's Dart
+//!   type, the fault kind and fields, and one [`dart_result`] pair per operation that answers
+//!   (published only where the `dart` feature is on).
 //! - `dart_http_client()`: the Dart sibling of `ts_http_client()` — the same `http_rest` seam and
-//!   per-operation client, in Dart, over the `dart` feature's own types and codec rather than Zod,
-//!   and throwing on failure rather than returning a result union (published only where the `dart`
-//!   feature is on).
+//!   per-operation client, in Dart, over the `dart` feature's own types and codec rather than Zod;
+//!   a reply method answers [`dart_result`]'s own sealed pair rather than throwing (published only
+//!   where the `dart` feature is on).
 //! - `dart_ws_client()`: the Dart `ws_rpc` sibling — a transport over a sink and a stream, the
-//!   per-operation client, and a dispatcher attachment for a service the app implements (published
-//!   only where the `dart` feature is on).
+//!   per-operation client answering the same sealed pair as `dart_http_client()`, and a dispatcher
+//!   attachment for a service the app implements (published only where the `dart` feature is on).
 //!
 //! # The client and the dispatcher exist only where the Zod surface does
 //!
@@ -97,6 +100,8 @@
 mod client;
 #[cfg(feature = "dart")]
 mod dart_http_client;
+#[cfg(feature = "dart")]
+mod dart_result;
 #[cfg(feature = "dart")]
 mod dart_ws_client;
 mod fault;
@@ -153,18 +158,26 @@ pub fn emit(service: &ServiceDef, non_exhaustive: bool) -> TokenStream {
 /// types and codec this client's messages, successes and errors are written in.
 #[cfg(feature = "dart")]
 fn dart_seam(service: &ServiceDef) -> TokenStream {
+    let definition = dart_published(service);
     let client = dart_http_client::emit(service).join("\n\n");
     let ws_client = dart_ws_client::emit(service).join("\n\n");
     quote! {
-        #[doc = " The service's generated Dart `http_rest` client: the transport seam, the"]
-        #[doc = " exceptions a call throws, and the client class."]
+        #[doc = " Every Dart type this service publishes: the messages the macro declared for it,"]
+        #[doc = " the fault kind and fields, and one result pair per operation that answers — the"]
+        #[doc = " Dart twin of `ts_definition()`."]
+        pub fn dart_definition() -> String {
+            [#(#definition),*].join("\n\n")
+        }
+
+        #[doc = " The service's generated Dart `http_rest` client: the transport seam, the client"]
+        #[doc = " class, and the one-way refusal a call still throws."]
         pub fn dart_http_client() -> String {
             #client.to_owned()
         }
 
         #[doc = " The service's generated Dart `ws_rpc` client: the transport over a sink and a"]
-        #[doc = " stream, the client class, the exceptions a call throws, and the dispatcher"]
-        #[doc = " attachment."]
+        #[doc = " stream, the client class, the one-way refusal a call still throws, and the"]
+        #[doc = " dispatcher attachment."]
         pub fn dart_ws_client() -> String {
             #ws_client.to_owned()
         }
@@ -274,6 +287,33 @@ fn published(service: &ServiceDef) -> Vec<TokenStream> {
     );
     collected.extend(
         result::emit(service)
+            .iter()
+            .map(|rendered| quote! { #rendered.to_owned() }),
+    );
+    collected
+}
+
+/// The Dart twin of [`published`], with no `fault::emit` counterpart: Dart names no sealed fault
+/// type of its own, so the result pair's `Fault` member and every fault helper reach for
+/// `{Service}FaultFields` directly.
+#[cfg(feature = "dart")]
+fn dart_published(service: &ServiceDef) -> Vec<TokenStream> {
+    use crate::features::dart::dart_module_ident;
+
+    let module = module_ident(service);
+    let mut collected = Vec::new();
+    for declared in &service.generated_messages {
+        let message_dart = dart_module_ident(&declared.ident.to_string(), declared.ident.span());
+        collected.push(quote! { #message_dart::dart_definition() });
+    }
+    let fields = fault_fields_typescript_name(&service.ident.to_string());
+    let fields_dart = dart_module_ident(&fields, service.ident.span());
+    let kind = format!("{}FaultKind", service.ident);
+    let kind_dart = dart_module_ident(&kind, service.ident.span());
+    collected.push(quote! { #module::#kind_dart::dart_definition() });
+    collected.push(quote! { #module::#fields_dart::dart_definition() });
+    collected.extend(
+        dart_result::emit(service)
             .iter()
             .map(|rendered| quote! { #rendered.to_owned() }),
     );

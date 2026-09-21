@@ -158,7 +158,9 @@ use crate::utils::record_ts_union_members;
 
 #[cfg(any(feature = "typescript", feature = "zod", feature = "jsonschema"))]
 use crate::utils::register_alias_info;
-use crate::utils::{is_wire_scalar_type, record_wire_scalar};
+use crate::utils::{
+    is_recorded_untagged_enum, is_wire_scalar_type, record_untagged_enum, record_wire_scalar,
+};
 
 #[cfg(feature = "serde")]
 use crate::utils::to_snake_case;
@@ -1108,6 +1110,7 @@ pub fn exec_model_schema(args: TokenStream, input: TokenStream) -> TokenStream {
     }
     // Read in every feature combination: a transport reads it whether or not a surface is on.
     record_wire_scalar_item(&item);
+    record_untagged_enum_item(&item);
     // A `default_types` declaration is read against the item's own parameters, which the parser
     // never sees, so both directions are answered here — ahead of every shape, and of the branded
     // split inside the struct path.
@@ -1358,6 +1361,27 @@ fn has_serde_transparent(attrs: &[syn::Attribute]) -> bool {
             let mut found = false;
             let _: syn::Result<()> = attr.parse_nested_meta(|nested| {
                 if nested.path.is_ident("transparent") {
+                    found = true;
+                }
+                Ok(())
+            });
+            if found {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Whether `attrs` carries `#[serde(untagged)]`, read off the raw tokens rather than through
+/// [`parse_serde_type_attributes`] — [`record_untagged_enum_item`] feeds a registry that has to
+/// answer the same way in every feature combination.
+fn has_serde_untagged(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if attr.path().is_ident("serde") {
+            let mut found = false;
+            let _: syn::Result<()> = attr.parse_nested_meta(|nested| {
+                if nested.path.is_ident("untagged") {
                     found = true;
                 }
                 Ok(())
@@ -3799,6 +3823,23 @@ fn record_wire_scalar_item(item: &Item) {
     }
 }
 
+/// Records `item` where it is an enum declared `#[serde(untagged)]`, or an alias of one, for
+/// [`is_recorded_untagged_enum`](crate::utils::is_recorded_untagged_enum) to answer a later
+/// item's own refusal. Alias transitivity: `type MyError = SomeUntaggedEnum;` is untagged too.
+fn record_untagged_enum_item(item: &Item) {
+    if let Item::Enum(item_enum) = item {
+        if has_serde_untagged(&item_enum.attrs) {
+            record_untagged_enum(&item_enum.ident.to_string());
+        }
+        return;
+    }
+    if let Item::Type(item_type) = item
+        && is_recorded_untagged_enum(&item_type.ty)
+    {
+        record_untagged_enum(&item_type.ident.to_string());
+    }
+}
+
 /// The name and inner type of the two shapes that can publish a bare scalar under their own name.
 fn wire_scalar_candidate(item: &Item) -> Option<(&syn::Ident, &syn::Type)> {
     if let Item::Type(item_type) = item {
@@ -5787,6 +5828,191 @@ fn build_plain_enum_type_code(enum_options: &[String], enum_variant_docs: &[Stri
         .join("\n")
 }
 
+/// The `case "wire": return "Rust";` arms a `{Enum}$Variant` reader switches over, one per
+/// variant.
+#[cfg(feature = "typescript")]
+fn variant_reader_case_arms(pairs: &[(String, String)]) -> String {
+    pairs
+        .iter()
+        .map(|(wire, rust)| format!("    case \"{wire}\": return \"{rust}\";"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The `{Enum}$Variant` reader for a unit-only enum with no tag: the value itself is the wire
+/// name.
+#[cfg(feature = "typescript")]
+fn plain_enum_variant_reader(item_name: &str, pairs: &[(String, String)]) -> String {
+    format!(
+        "/** The Rust variant name `value` carries, or \"\" where it carries none. */\n\
+         export function {item_name}$Variant(value: unknown): string {{\n  switch (value) {{\n{}\n    default: return \"\";\n  }}\n}}",
+        variant_reader_case_arms(pairs)
+    )
+}
+
+/// The `(wire name, Rust name)` pairs a unit-only enum's own reader switches on, one per variant.
+#[cfg(feature = "typescript")]
+fn plain_enum_reader_pairs(
+    item_enum: &syn::ItemEnum,
+    rename_all: Option<&str>,
+) -> Vec<(String, String)> {
+    item_enum
+        .variants
+        .iter()
+        .map(|variant| {
+            #[cfg(feature = "serde")]
+            let field_rename = parse_serde_field_attributes(&variant.attrs).rename;
+            #[cfg(not(feature = "serde"))]
+            let field_rename: Option<String> = None;
+            let rust_ident = variant.ident.to_string();
+            let wire_name =
+                get_final_variant_name(&rust_ident, field_rename.as_deref(), rename_all);
+            (wire_name, rust_ident)
+        })
+        .collect()
+}
+
+/// The `{Enum}$Variant` reader for an internally or adjacently tagged enum: the wire name sits
+/// under the tag key, whatever else the value carries beside it.
+#[cfg(feature = "typescript")]
+fn tagged_enum_variant_reader(
+    item_name: &str,
+    tag_name: &str,
+    pairs: &[(String, String)],
+) -> String {
+    let key = ts_member_key(tag_name);
+    let read = if key.starts_with('"') {
+        format!("(value as Record<string, unknown>)[{key}]")
+    } else {
+        format!("(value as {{ {key}?: unknown }}).{key}")
+    };
+    format!(
+        "/** The Rust variant name `value` carries, or \"\" where it carries none. */\n\
+         export function {item_name}$Variant(value: unknown): string {{\n  if (typeof value !== \"object\" || value === null) return \"\";\n  switch ({read}) {{\n{}\n    default: return \"\";\n  }}\n}}",
+        variant_reader_case_arms(pairs)
+    )
+}
+
+/// The `{Enum}$Variant` reader for an externally tagged enum: a payload variant writes the wire
+/// name as the object's sole key, a unit variant as a bare string.
+#[cfg(all(feature = "typescript", feature = "serde"))]
+fn externally_tagged_enum_variant_reader(item_name: &str, pairs: &[(String, String)]) -> String {
+    format!(
+        "/** The Rust variant name `value` carries, or \"\" where it carries none. */\n\
+         export function {item_name}$Variant(value: unknown): string {{\n  const key = typeof value === \"string\" ? value\n    : typeof value === \"object\" && value !== null && Object.keys(value).length === 1 ? Object.keys(value)[0]\n    : undefined;\n  switch (key) {{\n{}\n    default: return \"\";\n  }}\n}}",
+        variant_reader_case_arms(pairs)
+    )
+}
+
+/// The `{Enum}$Variant` reader for an untagged enum: no serde form carries the variant's own name,
+/// so there is nothing to read.
+#[cfg(all(feature = "typescript", feature = "serde"))]
+fn untagged_enum_variant_reader(item_name: &str) -> String {
+    format!(
+        "/** The Rust variant name `value` carries, or \"\" where it carries none. */\n\
+         export function {item_name}$Variant(_value: unknown): string {{\n  return \"\";\n}}"
+    )
+}
+
+/// The `(wire name, Rust name)` pairs a discriminated enum's own reader switches on, one per
+/// variant — computed straight off the declaration, which is all the reader needs.
+#[cfg(feature = "typescript")]
+fn discriminated_variant_reader_pairs(
+    item_enum: &syn::ItemEnum,
+    casing: EnumCasing<'_>,
+) -> Vec<(String, String)> {
+    item_enum
+        .variants
+        .iter()
+        .map(|variant| {
+            let (field_rename, _) = variant_serde_names(&variant.attrs, casing.variant_fields);
+            let rust_ident = variant.ident.to_string();
+            let wire_name =
+                get_final_variant_name(&rust_ident, field_rename.as_deref(), casing.variants);
+            (wire_name, rust_ident)
+        })
+        .collect()
+}
+
+/// The plain-enum `ts_definition()` method, its `{Enum}$Variant` reader computed and appended in
+/// one call — kept off `process_plain_enum` so that function stays under the line lint.
+#[cfg(feature = "typescript")]
+fn plain_enum_ts_definition_method(
+    docs: &str,
+    item_name: &str,
+    type_code: &str,
+    item_enum: &syn::ItemEnum,
+    rename_all: Option<&str>,
+) -> proc_macro2::TokenStream {
+    let rust_ident = item_enum.ident.to_string();
+    let ts_generics = ts_generic_params(&item_enum.generics);
+    let reader =
+        plain_enum_variant_reader(item_name, &plain_enum_reader_pairs(item_enum, rename_all));
+    generate_plain_enum_ts_definition_method(
+        docs,
+        item_name,
+        &rust_ident,
+        &ts_generics,
+        type_code,
+        &reader,
+    )
+}
+
+/// The internally- or adjacently-tagged `ts_definition()` method, its reader computed and appended
+/// in one call — kept off the two `process_*` functions that call it so they stay under the line
+/// lint.
+#[cfg(feature = "typescript")]
+fn tagged_ts_definition_method(
+    docs: &str,
+    item_name: &str,
+    type_code: &str,
+    tag_name: &str,
+    item_enum: &syn::ItemEnum,
+    casing: EnumCasing<'_>,
+) -> proc_macro2::TokenStream {
+    let rust_ident = item_enum.ident.to_string();
+    let ts_generics = ts_generic_params(&item_enum.generics);
+    let reader = tagged_enum_variant_reader(
+        item_name,
+        tag_name,
+        &discriminated_variant_reader_pairs(item_enum, casing),
+    );
+    generate_discriminated_enum_ts_definition_method(
+        docs,
+        item_name,
+        &rust_ident,
+        &ts_generics,
+        type_code,
+        &reader,
+    )
+}
+
+/// The externally-tagged `ts_definition()` method, its reader computed and appended in one call —
+/// kept off `process_externally_tagged_enum` so that function stays under the line lint.
+#[cfg(all(feature = "typescript", feature = "serde"))]
+fn externally_tagged_ts_definition_method(
+    docs: &str,
+    item_name: &str,
+    type_code: &str,
+    item_enum: &syn::ItemEnum,
+    casing: EnumCasing<'_>,
+) -> proc_macro2::TokenStream {
+    let rust_ident = item_enum.ident.to_string();
+    let ts_generics = ts_generic_params(&item_enum.generics);
+    let reader = externally_tagged_enum_variant_reader(
+        item_name,
+        &discriminated_variant_reader_pairs(item_enum, casing),
+    );
+    generate_discriminated_enum_ts_definition_method(
+        docs,
+        item_name,
+        &rust_ident,
+        &ts_generics,
+        type_code,
+        &reader,
+    )
+}
+
 /// Processes a plain enum (simple string enum in TypeScript) and generates its definitions.
 fn process_plain_enum(
     mut item_enum: syn::ItemEnum,
@@ -5804,7 +6030,7 @@ fn process_plain_enum(
         AliasKind::EnumMembers,
         Surface::enumerated(),
     );
-    #[cfg(any(feature = "typescript", feature = "zod"))]
+    #[cfg(feature = "zod")]
     let rust_ident = name.to_string();
 
     #[cfg(any(feature = "typescript", feature = "zod"))]
@@ -5836,12 +6062,12 @@ fn process_plain_enum(
     let json_schema_method = generate_plain_enum_json_schema_method(&enumerated, item_name, &[]);
 
     #[cfg(feature = "typescript")]
-    let ts_definition_method = generate_plain_enum_ts_definition_method(
+    let ts_definition_method = plain_enum_ts_definition_method(
         &docs_and_description.0,
         item_name,
-        &rust_ident,
-        &ts_generic_params(&item_enum.generics),
         &type_code,
+        &item_enum,
+        rename_all,
     );
 
     // Schema module emits zod_schema without examples; example injection happens in the delegating
@@ -6341,13 +6567,8 @@ fn process_discriminated_enum(
         enum_json_schema_methods(&main_schema_code, item_name, &item_enum.generics, args);
 
     #[cfg(feature = "typescript")]
-    let ts_definition_method = generate_discriminated_enum_ts_definition_method(
-        &docs,
-        item_name,
-        &name.to_string(),
-        &ts_generic_params(&item_enum.generics),
-        &type_code,
-    );
+    let ts_definition_method =
+        tagged_ts_definition_method(&docs, item_name, &type_code, tag_name, &item_enum, casing);
 
     // Schema module emits zod_schema without examples; example injection happens in the delegating
     // method on the type to avoid `super::` resolution issues.
@@ -6877,13 +7098,8 @@ fn process_externally_tagged_enum(
         enum_json_schema_methods(&main_schema_code, item_name, &item_enum.generics, args);
 
     #[cfg(feature = "typescript")]
-    let ts_definition_method = generate_discriminated_enum_ts_definition_method(
-        &docs,
-        item_name,
-        &name.to_string(),
-        &ts_generic_params(&item_enum.generics),
-        &type_code,
-    );
+    let ts_definition_method =
+        externally_tagged_ts_definition_method(&docs, item_name, &type_code, &item_enum, casing);
 
     #[cfg(feature = "zod")]
     let zod_schema_method = generate_discriminated_enum_zod_schema_method(
@@ -7287,13 +7503,8 @@ fn process_internally_tagged_enum(
         enum_json_schema_methods(&main_schema_code, item_name, &item_enum.generics, args);
 
     #[cfg(feature = "typescript")]
-    let ts_definition_method = generate_discriminated_enum_ts_definition_method(
-        &docs,
-        item_name,
-        &name.to_string(),
-        &ts_generic_params(&item_enum.generics),
-        &type_code,
-    );
+    let ts_definition_method =
+        tagged_ts_definition_method(&docs, item_name, &type_code, tag_name, &item_enum, casing);
 
     #[cfg(feature = "zod")]
     let zod_schema_method = generate_discriminated_enum_zod_schema_method(
@@ -8279,12 +8490,16 @@ fn build_untagged_schema_impl_items(
         enum_json_schema_methods(&main_schema_code, item_name, &item_enum.generics, args);
 
     #[cfg(feature = "typescript")]
+    let variant_reader = untagged_enum_variant_reader(item_name);
+
+    #[cfg(feature = "typescript")]
     let ts_definition_method = generate_discriminated_enum_ts_definition_method(
         &docs,
         item_name,
         &item_enum.ident.to_string(),
         &ts_generic_params(&item_enum.generics),
         &type_code,
+        &variant_reader,
     );
 
     #[cfg(feature = "zod")]
@@ -12913,6 +13128,7 @@ fn generate_plain_enum_ts_definition_method(
     rust_ident: &str,
     ts_generics: &str,
     type_code: &str,
+    variant_reader: &str,
 ) -> proc_macro2::TokenStream {
     #[cfg(feature = "typescript")]
     {
@@ -12920,7 +13136,7 @@ fn generate_plain_enum_ts_definition_method(
         let reexport = ident_reexport_ts(rust_ident, item_name, ts_generics);
 
         let typescript_type_gen = quote::quote! {
-            format!("{}export type {}{} =\n{};{}", docs, #item_name, #ts_generics, #type_code, #reexport)
+            format!("{}export type {}{} =\n{};{}\n\n{}", docs, #item_name, #ts_generics, #type_code, #reexport, #variant_reader)
         };
 
         quote::quote! {
@@ -13005,6 +13221,7 @@ fn generate_discriminated_enum_ts_definition_method(
     rust_ident: &str,
     ts_generics: &str,
     type_code: &str,
+    variant_reader: &str,
 ) -> proc_macro2::TokenStream {
     #[cfg(feature = "typescript")]
     {
@@ -13015,7 +13232,9 @@ fn generate_discriminated_enum_ts_definition_method(
             pub fn ts_definition() -> String {
                 #json_docs_gen
                 let bundled_docs = docs;
-                format!(r#"{bundled_docs}export type {}{} = {};{}"#, #item_name, #ts_generics, #type_code, #reexport)
+                format!(r#"{bundled_docs}export type {}{} = {};{}
+
+{}"#, #item_name, #ts_generics, #type_code, #reexport, #variant_reader)
             }
         }
     }

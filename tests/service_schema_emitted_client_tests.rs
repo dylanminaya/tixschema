@@ -31,6 +31,10 @@ mod run_node_ws_server;
 mod run_dart;
 
 #[cfg(test)]
+#[path = "service_schema_emitted_client_tests/run_dart_ws.rs"]
+mod run_dart_ws;
+
+#[cfg(test)]
 #[path = "service_schema_emitted_client_tests/runtime.rs"]
 mod runtime;
 

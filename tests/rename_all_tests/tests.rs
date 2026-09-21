@@ -177,7 +177,10 @@ fn snake_case_ts_union_matches_serde_wire() {
     assert!(ts.contains("\"body_only\""), "Got:\n{ts}");
     assert!(ts.contains("\"noop\""), "Got:\n{ts}");
     assert!(ts.contains("\"verbatim\""), "Got:\n{ts}");
-    assert!(!ts.contains("\"BodyOnly\""), "Got:\n{ts}");
+    // The exported type never leaks the Rust name; the `$Variant` reader appended after it does
+    // by design, so the check is scoped to the type declaration alone.
+    let type_declaration = ts.split("\n\n").next().unwrap();
+    assert!(!type_declaration.contains("\"BodyOnly\""), "Got:\n{ts}");
 }
 
 #[cfg(feature = "zod")]

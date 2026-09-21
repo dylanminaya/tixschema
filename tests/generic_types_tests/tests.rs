@@ -133,6 +133,36 @@ mod typescript {
         }
     }
 
+    /// A variant's name does not depend on the arguments a generic enum is filled with, so every
+    /// flavour publishes the same plain one-argument reader — never a factory taking a schema.
+    #[test]
+    fn every_enum_flavour_publishes_the_same_one_argument_reader() {
+        for (flavour, ts) in [
+            ("Adjacent", Adjacent::<String>::ts_definition()),
+            ("Internal", Internal::<String>::ts_definition()),
+            ("External", External::<String>::ts_definition()),
+            ("Untagged", Untagged::<String>::ts_definition()),
+        ] {
+            // The untagged form takes an unread `_value`, since it has nothing to read — but only
+            // `serde` reads `#[serde(untagged)]` at all; without it, Untagged expands tagged.
+            let parameter = if cfg!(feature = "serde") && flavour == "Untagged" {
+                "_value"
+            } else {
+                "value"
+            };
+            assert!(
+                ts.contains(&format!(
+                    "export function {flavour}$Variant({parameter}: unknown): string {{"
+                )),
+                "Got: {ts}"
+            );
+            assert!(
+                !ts.contains(&format!("{flavour}$Variant(idType")),
+                "a reader takes no schema argument. Got: {ts}"
+            );
+        }
+    }
+
     #[cfg(feature = "serde")]
     #[test]
     fn each_tagged_shape_reaches_its_parameter_where_that_shape_puts_it() {
