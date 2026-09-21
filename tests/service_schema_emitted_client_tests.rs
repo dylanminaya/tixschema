@@ -71,6 +71,10 @@ mod run_dart;
 mod run_dart_ws;
 
 #[cfg(test)]
+#[path = "service_schema_emitted_client_tests/run_swift.rs"]
+mod run_swift;
+
+#[cfg(test)]
 #[path = "service_schema_emitted_client_tests/runtime.rs"]
 mod runtime;
 
