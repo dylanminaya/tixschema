@@ -382,6 +382,16 @@ const DART_SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
     }
 ";
 
+/// A reply operation whose success is `()` — nothing rides in the pair's `Ok` member or the
+/// clients' unit arm.
+#[cfg(feature = "dart")]
+const DART_UNIT_SUCCESS_HTTP_SERVICE: &str = "
+    pub trait PingClientService<Ctx> {
+        #[service_schema_op(http(method = \"POST\", path = \"/v1/ping\"))]
+        async fn ping(&self, ctx: &Ctx, req: PingRequest) -> Result<(), PingError>;
+    }
+";
+
 /// A service exercising both operation shapes `ws_rpc` answers for: a reply operation over a
 /// `Named` message, and a one-way operation. Named for the design's own running example.
 #[cfg(feature = "dart")]
