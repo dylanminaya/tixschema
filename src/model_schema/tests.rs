@@ -41,6 +41,9 @@ use super::tuple_struct_json_body;
 #[cfg(any(feature = "typescript", feature = "zod", feature = "jsonschema"))]
 use super::{check_slot_wire_is_readable, tuple_struct_shape};
 
+#[cfg(feature = "swift")]
+use super::swift_width_refusals;
+
 use super::{
     VariantKind, check_variant_slot_wire_is_readable, parse_serde_key_omission, variant_wire_kind,
 };
@@ -1901,6 +1904,56 @@ fn field_map_key_error(field_type: &proc_macro2::TokenStream) -> String {
     check_map_key(field, &field_def, &field_label("counts"))
         .err()
         .map_or_else(String::new, |err| err.to_compile_error().to_string())
+}
+
+/// A `u64` or `usize` field is refused for Swift at that type's own expansion, spanned on the
+/// field's declared type and naming both the field and the refused primitive; `i64` earns nothing.
+#[cfg(feature = "swift")]
+#[test]
+fn a_u64_or_usize_field_is_refused_for_swift() {
+    let item: syn::Item = syn::parse_quote! {
+        struct Report {
+            count: u64,
+        }
+    };
+    let tokens = swift_width_refusals(&item)
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(tokens.contains("compile_error"), "got: {tokens}");
+    assert!(
+        tokens.contains(
+            "model_schema: field `count`: `u64` has no Swift mapping; the Swift target refuses \
+             unsigned 64-bit and pointer-sized integers"
+        ),
+        "got: {tokens}"
+    );
+
+    let usize_item: syn::Item = syn::parse_quote! {
+        struct Report {
+            total: usize,
+        }
+    };
+    let usize_tokens = swift_width_refusals(&usize_item)
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        usize_tokens.contains(
+            "field `total`: `usize` has no Swift mapping; the Swift target refuses unsigned \
+             64-bit and pointer-sized integers"
+        ),
+        "got: {usize_tokens}"
+    );
+
+    let i64_item: syn::Item = syn::parse_quote! {
+        struct Report {
+            count: i64,
+        }
+    };
+    assert!(swift_width_refusals(&i64_item).is_empty());
 }
 
 /// The registry proves a struct-keyed map has no members to name, and it proves it whatever surface

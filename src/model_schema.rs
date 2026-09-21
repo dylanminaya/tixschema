@@ -122,6 +122,9 @@ use crate::utils::json_argument_binding;
 #[cfg(feature = "dart")]
 use crate::features::dart::dart_schema_dispatch;
 
+#[cfg(feature = "swift")]
+use crate::features::swift::{refuses_swift, swift_schema_dispatch};
+
 #[cfg(any(
     feature = "typescript",
     feature = "zod",
@@ -1193,8 +1196,12 @@ pub fn exec_model_schema(args: TokenStream, input: TokenStream) -> TokenStream {
     // other three surfaces share (a Dart class has no forward-reference or cycle problem to solve,
     // unlike a JavaScript module's top-to-bottom `const` evaluation, so it carries no factory-cache
     // or `z.lazy`-style deferral of its own to wire in).
-    #[cfg(feature = "dart")]
-    let dart_tokens = dart_schema_dispatch(&item, parsed_args.name_override.as_deref());
+    let dart_tokens = dart_suffix_tokens(&item, parsed_args.name_override.as_deref());
+    // Same independence from the struct/enum/alias dispatch below as the Dart tokens above; the
+    // refusal walks the item's own fields ahead of the move too, since it names each one by its
+    // declared type.
+    let swift_tokens = swift_suffix_tokens(&item, parsed_args.name_override.as_deref());
+    let swift_refusals = swift_width_refusals(&item);
     let expanded = if let Item::Struct(item_struct) = item {
         process_struct(item_struct, &parsed_args)
     } else if let Item::Enum(item_enum) = item {
@@ -1210,14 +1217,32 @@ pub fn exec_model_schema(args: TokenStream, input: TokenStream) -> TokenStream {
     };
     let deferred = with_prefixed_tokens(expanded, &deferred_shape_refusals(registering.as_ref()));
     let bound = with_prefixed_tokens(deferred, &filling_bound_checks);
-    #[cfg(feature = "dart")]
-    {
-        quote! { #bound #dart_tokens }
-    }
-    #[cfg(not(feature = "dart"))]
-    {
-        bound
-    }
+    let width_checked = with_prefixed_tokens(bound, &swift_refusals);
+    quote! { #width_checked #dart_tokens #swift_tokens }
+}
+
+/// The Dart tokens `item` earns, or nothing without the `dart` feature — always callable, so the
+/// tokens that follow the item's own expansion never need a `#[cfg]`-gated `let` of their own.
+#[cfg(feature = "dart")]
+fn dart_suffix_tokens(item: &Item, name_override: Option<&str>) -> TokenStream {
+    dart_schema_dispatch(item, name_override)
+}
+
+#[cfg(not(feature = "dart"))]
+fn dart_suffix_tokens(_item: &Item, _name_override: Option<&str>) -> TokenStream {
+    TokenStream::new()
+}
+
+/// The Swift tokens `item` earns, or nothing without the `swift` feature — the same always-
+/// callable shape as [`dart_suffix_tokens`].
+#[cfg(feature = "swift")]
+fn swift_suffix_tokens(item: &Item, name_override: Option<&str>) -> TokenStream {
+    swift_schema_dispatch(item, name_override)
+}
+
+#[cfg(not(feature = "swift"))]
+fn swift_suffix_tokens(_item: &Item, _name_override: Option<&str>) -> TokenStream {
+    TokenStream::new()
 }
 
 /// Classifies what an alias resolves to, for the registry.
@@ -3239,6 +3264,126 @@ fn deferred_shape_refusals(registering: Option<&Ident>) -> Vec<proc_macro2::Toke
 const fn deferred_shape_refusals(
     _registering: Option<&syn::Ident>,
 ) -> Vec<proc_macro2::TokenStream> {
+    Vec::new()
+}
+
+/// Every named field, tuple slot and (for an alias) target type an item declares, with the label
+/// its own refusal message names it by — [`field_label`] for a struct or enum-variant field,
+/// [`item_label`] for an alias's own target.
+#[cfg(feature = "swift")]
+fn swift_scanned_fields(item: &Item) -> Vec<(String, &syn::Type)> {
+    if let Item::Struct(item_struct) = item {
+        let mut found = Vec::new();
+        collect_swift_scanned_fields(&item_struct.fields, &mut found);
+        found
+    } else if let Item::Enum(item_enum) = item {
+        let mut found = Vec::new();
+        for variant in &item_enum.variants {
+            collect_swift_scanned_fields(&variant.fields, &mut found);
+        }
+        found
+    } else if let Item::Type(item_type) = item {
+        vec![(item_label(item), &item_type.ty)]
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(feature = "swift")]
+fn collect_swift_scanned_fields<'item>(
+    fields: &'item syn::Fields,
+    found: &mut Vec<(String, &'item syn::Type)>,
+) {
+    match fields {
+        syn::Fields::Named(named) => {
+            for field in &named.named {
+                let raw_name = field
+                    .ident
+                    .as_ref()
+                    .map_or_else(String::new, ToString::to_string);
+                found.push((field_label(&raw_name), &field.ty));
+            }
+        }
+        syn::Fields::Unit => {}
+        syn::Fields::Unnamed(unnamed) => {
+            for field in &unnamed.unnamed {
+                found.push((field_label(""), &field.ty));
+            }
+        }
+    }
+}
+
+/// The refused primitive `field_def`, or anything it directly contains (a map's key or value, a
+/// tuple's slots, a generic argument), names — `None` where nothing under it is a `u64` or
+/// `usize`. [`refuses_swift`] itself answers only for one `FieldDef`'s own type; this is the walk
+/// that reaches every one a declaration can nest one inside.
+#[cfg(feature = "swift")]
+fn swift_refused_primitive_name(field_def: &FieldDef) -> Option<&'static str> {
+    if refuses_swift(field_def) {
+        return Some(if matches!(field_def.field_type, FieldDefType::Usize) {
+            "usize"
+        } else {
+            "u64"
+        });
+    }
+    match &field_def.field_type {
+        FieldDefType::Map(key, value) => {
+            swift_refused_primitive_name(key).or_else(|| swift_refused_primitive_name(value))
+        }
+        FieldDefType::SiblingType(_, arguments) => {
+            arguments.iter().find_map(swift_refused_primitive_name)
+        }
+        FieldDefType::Tuple(elements) => elements.iter().find_map(swift_refused_primitive_name),
+        FieldDefType::Boolean
+        | FieldDefType::BooleanLiteral(_)
+        | FieldDefType::Char
+        | FieldDefType::F32
+        | FieldDefType::F64
+        | FieldDefType::I16
+        | FieldDefType::I32
+        | FieldDefType::I64
+        | FieldDefType::I8
+        | FieldDefType::Isize
+        | FieldDefType::NumberLiteral(_)
+        | FieldDefType::String
+        | FieldDefType::StringLiteral(_)
+        | FieldDefType::TypeParam(_)
+        | FieldDefType::U16
+        | FieldDefType::U32
+        | FieldDefType::U64
+        | FieldDefType::U8
+        | FieldDefType::Unknown
+        | FieldDefType::Usize => None,
+        #[cfg(feature = "object_id")]
+        FieldDefType::ObjectId => None,
+        #[cfg(feature = "chrono")]
+        FieldDefType::DateTime
+        | FieldDefType::NaiveDate
+        | FieldDefType::NaiveDateTime
+        | FieldDefType::NaiveTime => None,
+    }
+}
+
+/// The `compile_error!` tokens an item earns for a `u64` or `usize` field, under `swift` — one
+/// per declared field or slot that names one anywhere in its type, spanned on that declared type.
+#[cfg(feature = "swift")]
+fn swift_width_refusals(item: &Item) -> Vec<proc_macro2::TokenStream> {
+    swift_scanned_fields(item)
+        .into_iter()
+        .filter_map(|(label, ty)| {
+            let field_def = get_field_def("", ty, "");
+            let refused = swift_refused_primitive_name(&field_def)?;
+            let message = format!(
+                "{label}: `{refused}` has no Swift mapping; the Swift target refuses unsigned \
+                 64-bit and pointer-sized integers"
+            );
+            Some(syn::Error::new_spanned(ty, prefixed_guard_message(&message)).to_compile_error())
+        })
+        .collect()
+}
+
+#[cfg(not(feature = "swift"))]
+const fn swift_width_refusals(_item: &Item) -> Vec<proc_macro2::TokenStream> {
     Vec::new()
 }
 
