@@ -22,6 +22,8 @@ mod dart_ws_client_tests;
 #[cfg(feature = "zod")]
 mod http_client_tests;
 #[cfg(feature = "zod")]
+mod http_service_tests;
+#[cfg(feature = "zod")]
 mod service_tests;
 #[cfg(feature = "zod")]
 mod ws_client_tests;
@@ -40,6 +42,8 @@ use super::dart_result;
 use super::dart_ws_client;
 #[cfg(feature = "zod")]
 use super::http_client;
+#[cfg(feature = "zod")]
+use super::http_service;
 #[cfg(feature = "zod")]
 use super::service;
 #[cfg(feature = "zod")]
@@ -115,6 +119,27 @@ const MIXED_HTTP_SERVICE: &str = "
         async fn purge_document(&self, ctx: &Ctx, document_id: String);
 
         async fn sweep_documents(&self, ctx: &Ctx) -> Result<SweepReport, SweepError>;
+    }
+";
+
+/// A service with a required (non-`Option`) `header_in` binding, to exercise the presence check
+/// `MIXED_HTTP_SERVICE`'s `Option<String>` `byte_range` does not get.
+#[cfg(feature = "zod")]
+const REQUIRED_HEADER_HTTP_SERVICE: &str = "
+    pub trait DocumentClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/versions/{version_id}\",
+            ok_status = 200,
+            header_in(\"range\" = byte_range),
+            error_status(NotFound = 404, VersionGone = 410),
+        ))]
+        async fn get_version(
+            &self,
+            ctx: &Ctx,
+            req: GetVersionRequest,
+            byte_range: String,
+        ) -> Result<VersionResponse, GetVersionError>;
     }
 ";
 
@@ -283,6 +308,48 @@ const SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
     }
 ";
 
+/// A service declaring one bodyless `GET` whose macro-generated message carries a placeholder
+/// field plus two unbound loose arguments (one numeric, one boolean), and whose operation
+/// declares no `error_status` table at all.
+#[cfg(feature = "zod")]
+const QUERY_HTTP_SERVICE: &str = "
+    pub trait SearchClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/search/{category}\",
+        ))]
+        async fn search(
+            &self,
+            ctx: &Ctx,
+            category: String,
+            limit: Option<u32>,
+            verbose: Option<bool>,
+        ) -> Result<SearchResponse, SearchError>;
+    }
+";
+
+/// The same declaration `tests/service_schema_emitted_client_tests/tests.rs` runs the emitted
+/// clients against — `ConversationId` a wire-scalar newtype, `purge_conversation` declared first,
+/// `window` second — which is what `ts_http_service()`'s own design document was executed
+/// against and is measured against verbatim.
+#[cfg(feature = "zod")]
+const EMITTED_CLIENT_TEST_SERVICE: &str = "
+    pub trait ConversationClientService<Ctx> {
+        #[service_schema_op(
+            one_way,
+            http(method = \"DELETE\", path = \"/v1/conversations/{conversation_id}\",)
+        )]
+        async fn purge_conversation(&self, ctx: &Ctx, conversation_id: ConversationId);
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/v1/conversations/{conversation_id}/window\",
+            error_status(NotFound = 404),
+        ))]
+        async fn window(&self, ctx: &Ctx, req: WindowRequest) -> Result<WindowPage, WindowError>;
+    }
+";
+
 /// A service declaring one `body = "bytes"` operation composing `header_out` onto its own tuple:
 /// the bytes, their content type, then the declared header. Dart-gated mirror of
 /// `BYTES_HTTP_SERVICE`, since a build can carry `dart` without `zod`.
@@ -416,6 +483,11 @@ fn client_of(source: &str) -> String {
 #[cfg(feature = "zod")]
 fn http_client_of(source: &str) -> String {
     http_client::emit(&parsed(source)).join("\n\n")
+}
+
+#[cfg(feature = "zod")]
+fn http_service_of(source: &str) -> String {
+    http_service::emit(&parsed(source)).join("\n\n")
 }
 
 #[cfg(feature = "zod")]
@@ -751,9 +823,11 @@ fn a_build_that_publishes_no_client_says_on_the_registry_why_not() {
     let rendered = registration(MIXED_SERVICE);
     for said in [
         "This build publishes no `UsageServiceSchema::ts_client()`, no \
-         `UsageServiceSchema::ts_http_client()`, no `UsageServiceSchema::ts_service()`, no \
-         `UsageServiceSchema::ts_ws_client()`, no `UsageServiceSchema::ts_ws_service()`, and no \
-         `UsageServiceSchema::ts_ws_server()`.",
+         `UsageServiceSchema::ts_http_client()`, no `UsageServiceSchema::ts_http_service()`, no \
+         `UsageServiceSchema::ts_service()`, no `UsageServiceSchema::ts_ws_client()`, no \
+         `UsageServiceSchema::ts_ws_service()`, and no `UsageServiceSchema::ts_ws_server()`.",
+        "The first six parse a message against the schema",
+        "leaves the seven seam artifacts out",
         "only a build with tixschema's `zod` feature writes one",
         "Add `features = [\\\"zod\\\"]` to the tixschema dependency to get them.",
     ] {
@@ -762,6 +836,29 @@ fn a_build_that_publishes_no_client_says_on_the_registry_why_not() {
             "the registry's own rustdoc names the feature and what to add. Got: {rendered}"
         );
     }
+}
+
+/// `ts_http_service()` is withheld for the same reason as `ts_service()`: its dispatcher parses a
+/// message against a schema this build does not write.
+#[cfg(not(feature = "zod"))]
+#[test]
+fn a_build_that_publishes_no_schema_publishes_no_http_service_either() {
+    let rendered = registration(MIXED_SERVICE);
+    assert!(
+        !rendered.contains("pub fn ts_http_service"),
+        "got: {rendered}"
+    );
+}
+
+/// The counterpart of the refusal above, in the build where the accessor exists.
+#[cfg(feature = "zod")]
+#[test]
+fn a_build_that_publishes_a_schema_publishes_ts_http_service() {
+    let rendered = registration(MIXED_SERVICE);
+    assert!(
+        rendered.contains("pub fn ts_http_service"),
+        "got: {rendered}"
+    );
 }
 
 /// What the Zod-less build still publishes, and therefore why it is not refused outright: the
