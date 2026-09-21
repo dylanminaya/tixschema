@@ -49,7 +49,7 @@ fn module() -> String {
 
 /// The requests the driver recorded, or `None` where no runtime was reachable.
 fn sent() -> Option<Vec<serde_json::Value>> {
-    let wrote = ran("node", RUNTIME_VAR, "node", "client.mts", &module(), &[])?;
+    let wrote = ran("node", RUNTIME_VAR, "node", "client.mts", &module())?;
     Some(serde_json::from_str(wrote.trim()).unwrap())
 }
 

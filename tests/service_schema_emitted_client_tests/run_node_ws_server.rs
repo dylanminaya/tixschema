@@ -5,7 +5,7 @@
 //! `TIXSCHEMA_NODE_MODULES`, standing down and naming that variable when either is missing. `just
 //! test-emitted` resolves it up front and refuses to stand down.
 
-use super::runtime::{node_modules, ran, stand_down_modules};
+use super::runtime::{node_modules, ran_with_modules, stand_down_modules};
 use super::tests::{
     ConversationClientServiceSchema, ConversationId, WindowError, WindowPage, WindowRequest,
 };
@@ -226,6 +226,7 @@ async function main() {
   const bClosed = onceEvent(b, "close");
   server.closeAll();
   await Promise.all([aClosed, bClosed]);
+  await until(() => server.connections().length === 0);
   const connectionsAfter = server.connections().length;
   wss.close();
   console.log(JSON.stringify({ connectionsBefore, connectionsAfter }));
@@ -428,14 +429,7 @@ fn run_scenario(named: &str, driver: &str) -> Option<serde_json::Value> {
         "{}\n\n{HELPERS}\n\n{IMPL_AND_MAKE_SERVER}\n\n{driver}",
         emitted()
     );
-    let wrote = ran(
-        named,
-        RUNTIME_VAR,
-        "node",
-        "server.mts",
-        &module,
-        &[("NODE_PATH", modules.as_os_str())],
-    )?;
+    let wrote = ran_with_modules(named, RUNTIME_VAR, "node", "server.mts", &module, &modules)?;
     Some(serde_json::from_str(wrote.trim()).unwrap())
 }
 
@@ -450,13 +444,13 @@ fn run_share_scenario() -> Option<serde_json::Value> {
         "{}\n\n{HELPERS}\n\n{IMPL_AND_MAKE_SERVER}\n\n{SHARE_DRIVER}",
         emitted()
     );
-    let wrote = ran(
+    let wrote = ran_with_modules(
         "ws-server-share",
         RUNTIME_VAR,
         "node",
         "share.mts",
         &module,
-        &[("NODE_PATH", modules.as_os_str())],
+        &modules,
     )?;
     Some(serde_json::from_str(wrote.trim()).unwrap())
 }
