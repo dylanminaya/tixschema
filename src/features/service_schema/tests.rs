@@ -27,6 +27,8 @@ mod http_service_tests;
 mod service_tests;
 #[cfg(feature = "swift")]
 mod swift_http_client_tests;
+#[cfg(feature = "swift")]
+mod swift_ws_client_tests;
 #[cfg(feature = "zod")]
 mod ws_client_tests;
 #[cfg(feature = "zod")]
@@ -50,6 +52,8 @@ use super::http_service;
 use super::service;
 #[cfg(feature = "swift")]
 use super::swift_http_client;
+#[cfg(feature = "swift")]
+use super::swift_ws_client;
 #[cfg(feature = "zod")]
 use super::ws_client;
 #[cfg(feature = "zod")]
@@ -656,6 +660,36 @@ const SWIFT_UNIT_SUCCESS_HTTP_SERVICE: &str = "
     }
 ";
 
+/// The design's own running example: a reply operation over a `Named` message answering a
+/// declared success or error, and a one-way operation over a branded newtype. Swift-gated, since
+/// it exercises `swift_ws_client()` independent of `zod`/`dart`.
+#[cfg(feature = "swift")]
+const SWIFT_WS_SERVICE: &str = "
+    pub trait ConversationClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/v1/conversations/{conversation_id}/window\",
+            error_status(NotFound = 404),
+        ))]
+        async fn window(&self, ctx: &Ctx, req: WindowRequest) -> Result<WindowPage, WindowError>;
+
+        #[service_schema_op(
+            one_way,
+            http(method = \"DELETE\", path = \"/v1/conversations/{conversation_id}\",)
+        )]
+        async fn purge_conversation(&self, ctx: &Ctx, conversation_id: ConversationId);
+    }
+";
+
+/// A reply operation whose success is `()` — nothing rides in the decoded `Result`'s success arm.
+#[cfg(feature = "swift")]
+const SWIFT_UNIT_SUCCESS_SERVICE: &str = "
+    pub trait PingClientService<Ctx> {
+        #[service_schema_op(http(method = \"POST\", path = \"/v1/ping\"))]
+        async fn ping(&self, ctx: &Ctx, req: PingRequest) -> Result<(), PingError>;
+    }
+";
+
 /// A service declaring a `Vec<Option<String>>` `header_in` binding, to exercise a nested optional
 /// element inside an otherwise-required header. Swift-gated mirror of the Dart suite's own inline
 /// fixture.
@@ -675,6 +709,11 @@ const SWIFT_HEADER_VEC_OF_OPTIONS_SERVICE: &str = "
         ) -> Result<ListTagsResponse, ListTagsError>;
     }
 ";
+
+#[cfg(feature = "swift")]
+fn swift_ws_client_of(source: &str) -> String {
+    swift_ws_client::emit(&parsed(source)).join("\n\n")
+}
 
 #[cfg(feature = "zod")]
 fn client_of(source: &str) -> String {

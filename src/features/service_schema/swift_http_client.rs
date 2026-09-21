@@ -56,6 +56,7 @@ pub fn emit(service: &ServiceDef) -> Vec<String> {
         request_struct(&named, has_multipart),
         response_struct(&named, has_stream),
         transport_protocol(&named),
+        fault_alias(&named),
     ];
     for operation in &service.operations {
         if let Some(failure) = failure_enum(&named, operation) {
@@ -180,6 +181,15 @@ fn failure_enum(named: &str, operation: &OperationDef) -> Option<String> {
          case fault({fields})\n\
          }}"
     ))
+}
+
+/// `{Named}Fault`, the shared fault type both this client and `swift_ws_client()` answer a
+/// defect with, bound once here over the service's generated `{Named}FaultFields` — declared
+/// unconditionally, since `swift_ws_client()`'s own transport-failure and failed-validation
+/// helpers name it whether or not this client also publishes.
+fn fault_alias(named: &str) -> String {
+    let fields = fault_fields_typescript_name(named);
+    format!("public typealias {named}Fault = {fields}")
 }
 
 fn refusal_struct(named: &str) -> String {

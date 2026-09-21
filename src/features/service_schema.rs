@@ -62,6 +62,10 @@
 //! - `swift_http_client()`: the Swift `http_rest` sibling — the transport seam, one `async`
 //!   method per operation over Swift's own `Result<Success, Failure>`, and the fault helpers
 //!   every method reaches for (published only where the `swift` feature is on).
+//! - `swift_ws_client()`: the Swift `ws_rpc` sibling — the socket seam, the heartbeat options, and
+//!   one actor carrying the correlation and the liveness probe with one method per operation,
+//!   naming `swift_http_client()`'s own `Failure`/`Refusal` types rather than redeclaring them
+//!   (published only where the `swift` feature is on).
 //!
 //! # The client and the dispatcher exist only where the Zod surface does
 //!
@@ -125,6 +129,8 @@ mod service;
 mod swift_http_client;
 #[cfg(feature = "swift")]
 mod swift_type;
+#[cfg(feature = "swift")]
+mod swift_ws_client;
 #[cfg(feature = "zod")]
 mod ws_client;
 #[cfg(feature = "zod")]
@@ -204,18 +210,29 @@ fn dart_seam(_service: &ServiceDef) -> TokenStream {
     TokenStream::new()
 }
 
-/// The service's generated Swift `http_rest` client: the transport seam, one `async` method per
+/// The service's generated Swift clients: the `http_rest` transport seam, one `async` method per
 /// operation over Swift's own `Result<Success, Failure>`, and the fault helpers every method
-/// reaches for — published only where the `swift` feature publishes the Swift types and codec
-/// this client's messages, successes and errors are written in.
+/// reaches for; and the `ws_rpc` transport seam, the heartbeat options, and one actor carrying the
+/// correlation and the liveness probe with one method per operation, naming
+/// `{Named}{Operation}Failure` and `{Named}Refusal` rather than redeclaring them — both published
+/// only where the `swift` feature publishes the Swift types and codec this client's messages,
+/// successes and errors are written in.
 #[cfg(feature = "swift")]
 fn swift_seam(service: &ServiceDef) -> TokenStream {
-    let client = swift_http_client::emit(service).join("\n\n");
+    let http_client = swift_http_client::emit(service).join("\n\n");
+    let ws_client = swift_ws_client::emit(service).join("\n\n");
     quote! {
         #[doc = " The service's generated Swift `http_rest` client: the transport seam, one"]
         #[doc = " `async` method per operation, and the fault helpers every method reaches for."]
         pub fn swift_http_client() -> String {
-            #client.to_owned()
+            #http_client.to_owned()
+        }
+
+        #[doc = " The service's generated Swift `ws_rpc` client: the socket seam, the heartbeat"]
+        #[doc = " options, and the actor that correlates requests to their replies and answers"]
+        #[doc = " one method per operation."]
+        pub fn swift_ws_client() -> String {
+            #ws_client.to_owned()
         }
     }
 }
