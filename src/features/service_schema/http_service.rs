@@ -380,16 +380,13 @@ fn empty_message_build(
     multipart: bool,
     prefix: &str,
 ) -> (String, String) {
-    if multipart {
-        return (String::new(), "{}".to_owned());
-    }
-    if bodied {
+    if bodied && !multipart {
         return (
             whole_body_message_stmt(&operation.wire_name, prefix),
             "message".to_owned(),
         );
     }
-    (String::new(), "null".to_owned())
+    (String::new(), "{}".to_owned())
 }
 
 fn named_message_build(
@@ -658,12 +655,10 @@ fn assembly_rule_lines(operation: &OperationDef, shape: &HttpShape) -> Vec<Strin
 }
 
 fn empty_rule_lines(bodied: bool, multipart: bool) -> Vec<String> {
-    if multipart {
-        vec!["no argument beside the context: the message is an empty object.".to_owned()]
-    } else if bodied {
+    if bodied && !multipart {
         vec!["the message is the parsed body.".to_owned()]
     } else {
-        vec!["no argument beside the context: the message is `null`.".to_owned()]
+        vec!["no argument beside the context: the message is an empty object.".to_owned()]
     }
 }
 

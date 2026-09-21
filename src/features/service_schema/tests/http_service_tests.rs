@@ -380,3 +380,23 @@ fn a_multipart_operation_reads_its_own_fields_off_parts_and_hands_a_bound_part_t
          headers. Got: {written}"
     );
 }
+
+/// H8, the "nothing at all" rule: a bodyless operation carrying no field beside the context
+/// assembles the same message the Rust dispatcher does — the empty object — never `null`, which
+/// `z.strictObject({})` refuses.
+#[test]
+fn a_bodyless_operation_with_no_field_assembles_the_empty_object_not_null() {
+    let written = http_service_of(
+        "
+        pub trait PulseClientService<Ctx> {
+            #[service_schema_op(http(method = \"GET\", path = \"/pulse\"))]
+            async fn pulse(&self, ctx: &Ctx) -> Result<PulseResponse, PulseError>;
+        }
+        ",
+    );
+    assert!(
+        written.contains("return answer(ctx, request, \"pulse\", {}, 200, () => 422);"),
+        "got: {written}"
+    );
+    assert!(!written.contains(", null,"), "got: {written}");
+}
