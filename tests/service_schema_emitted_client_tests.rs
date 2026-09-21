@@ -18,6 +18,24 @@
 #[path = "service_schema_emitted_client_tests/tests.rs"]
 mod tests;
 
+/// The `http_rest` dispatcher for `ThumbnailClientService`, the Rust twin the `bytes` body kind
+/// is measured against — in a module of its own, the placement every dispatcher macro needs.
+#[cfg(test)]
+#[path = "service_schema_emitted_client_tests/thumbnail_http_rest_transport.rs"]
+mod thumbnail_http_rest_transport;
+
+/// The `http_rest` dispatcher for `ContentClientService`, the Rust twin the `stream` body kind
+/// is measured against.
+#[cfg(test)]
+#[path = "service_schema_emitted_client_tests/content_http_rest_transport.rs"]
+mod content_http_rest_transport;
+
+/// The `http_rest` dispatcher for `UploadDocumentClientService`, the Rust twin the `multipart`
+/// body kind is measured against.
+#[cfg(test)]
+#[path = "service_schema_emitted_client_tests/upload_document_http_rest_transport.rs"]
+mod upload_document_http_rest_transport;
+
 #[cfg(test)]
 #[path = "service_schema_emitted_client_tests/run_node.rs"]
 mod run_node;
@@ -25,6 +43,12 @@ mod run_node;
 #[cfg(test)]
 #[path = "service_schema_emitted_client_tests/run_node_ws_server.rs"]
 mod run_node_ws_server;
+
+/// The emitted `http_rest` server: the seven design requests, the reader forms, the query-read
+/// message, and the three body kinds compared against the Rust twins above.
+#[cfg(test)]
+#[path = "service_schema_emitted_client_tests/run_node_http_service.rs"]
+mod run_node_http_service;
 
 #[cfg(test)]
 #[path = "service_schema_emitted_client_tests/run_dart.rs"]
@@ -38,7 +62,14 @@ mod run_dart_ws;
 #[path = "service_schema_emitted_client_tests/runtime.rs"]
 mod runtime;
 
-// The transport's expansion reaches the service through `$crate`, which is this binary's root:
-// the trait and its schema module are named here for it to resolve.
+// The transport's expansion reaches each service through `$crate`, which is this binary's root:
+// every trait and its schema module are named here for it to resolve.
 #[cfg(test)]
-use tests::{ConversationClientService, conversation_client_service_schema};
+use tests::{
+    ArchiveClientService, ContentClientService, ConversationClientService, GateClientService,
+    SealClientService, SearchClientService, ThumbnailClientService, UploadDocumentClientService,
+    VaultClientService, archive_client_service_schema, content_client_service_schema,
+    conversation_client_service_schema, gate_client_service_schema, seal_client_service_schema,
+    search_client_service_schema, thumbnail_client_service_schema,
+    upload_document_client_service_schema, vault_client_service_schema,
+};
