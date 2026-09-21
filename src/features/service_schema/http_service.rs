@@ -26,28 +26,39 @@
 //! itself — and is called at all only where the table names more than one distinct status; one
 //! status (or none) needs no reader.
 //!
-//! # A bound header or multipart part has nowhere to arrive
+//! # A bound header or multipart part reaches the dispatcher, not this module
 //!
-//! `{Service}Impl<Ctx>` takes `(ctx, message)` and nothing else ([`super::service`]'s own
-//! `interface`), so neither a `header_in` binding nor a `part(...)` binding has a slot to reach an
-//! implementation through. A required (non-`Option`) `header_in` is presence-checked and then
-//! dropped; an `Option<_>` one is dropped with no check. A `part(...)` binding is still checked
-//! for presence — a request missing a required part is refused exactly as the Rust dispatcher
-//! refuses it — but its value, like a header's, is never read past the check.
+//! `create{Service}Dispatcher` — [`super::service`]'s own `dispatcher` — is where a `header_in`
+//! binding and a `part(...)` binding are read, decoded and refused, the same way it already reads
+//! and refuses the message. This module keeps no presence check of its own: it hands the request's
+//! own `headers` and, where the service declares multipart, its own `parts` straight through to
+//! `dispatch`, exactly as it hands the assembled message through.
 
+use super::message;
 use super::result::stream_success_ts_type;
 use crate::field_type::get_field_def;
 use crate::rename_rule::RenameRule;
 use crate::service_schema::parse::{
-    BodyKind, DEFAULT_BINDING_ERROR_STATUS, HeaderIn, HttpShape, MultipartPart, OperationDef,
-    OperationInputs, OperationOutcome, PathSegment, ScalarKind, ServiceDef, is_scalar_named_type,
-    option_inner, scalar_kind, service_declares_a_stream, service_declares_multipart,
-    tuple_elements, type_leaf_name, vec_inner, wire_key,
+    BodyKind, DEFAULT_BINDING_ERROR_STATUS, HttpShape, OperationDef, OperationInputs,
+    OperationOutcome, PathSegment, ServiceDef, is_scalar_named_type, option_inner,
+    service_declares_a_stream, service_declares_multipart, tuple_elements, type_leaf_name,
+    vec_inner, wire_key,
 };
 use crate::service_schema::support::fault_fields_typescript_name;
 use crate::utils::is_recorded_untagged_enum;
 use core::fmt::Write as _;
 use syn::Type;
+
+/// The three facts every dispatcher-building function below reads off the service, bundled so
+/// none of them carries more of its own parameters than a reader can hold at once: the published
+/// name, the camelCase prefix its own helpers are named under, and whether it declares a
+/// multipart operation at all — which decides whether `request.parts`/`parts` is threaded through
+/// beside `request.headers`/`headers`.
+struct DispatcherContext<'ctx> {
+    has_multipart: bool,
+    named: &'ctx str,
+    prefix: &'ctx str,
+}
 
 pub fn emit(service: &ServiceDef) -> Vec<String> {
     let named = service.ident.to_string();
@@ -273,27 +284,6 @@ fn coerce_number_fn(prefix: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Decoding a raw wire string into the value a field's declared type reads
-// ---------------------------------------------------------------------------------------------
-
-/// Mirrors the Rust `decode_expr`: a `Vec<...>` splits `raw` on `,` and coerces each piece the
-/// same way; otherwise a boolean text, a numeric coercion, or the text itself.
-fn decode_ts_expr(ty: &Type, raw: &str, prefix: &str) -> String {
-    let base = option_inner(ty).unwrap_or(ty);
-    if let Some(inner) = vec_inner(base) {
-        let element = decode_ts_expr(inner, "piece", prefix);
-        return format!("({raw}).split(\",\").map((piece: string) => {element})");
-    }
-    match scalar_kind(base) {
-        ScalarKind::Bool => {
-            format!("({raw} === \"true\" ? true : {raw} === \"false\" ? false : {raw})")
-        }
-        ScalarKind::Number => format!("{prefix}HttpCoerceNumber({raw})"),
-        ScalarKind::Text => raw.to_owned(),
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
 // A declared error's status
 // ---------------------------------------------------------------------------------------------
 
@@ -416,7 +406,7 @@ fn named_message_build(
     if placeholder_names.len() == 1 && is_scalar_named_type(named_type) {
         return (
             String::new(),
-            decode_ts_expr(named_type, &placeholder_names[0], prefix),
+            message::decode_ts_expr(named_type, &placeholder_names[0], prefix),
         );
     }
     let mut setup = if bodied && !multipart {
@@ -431,7 +421,7 @@ fn named_message_build(
 }
 
 fn query_field_insert(key: &str, ty: &Type, prefix: &str) -> String {
-    let decode = decode_ts_expr(ty, "raw", prefix);
+    let decode = message::decode_ts_expr(ty, "raw", prefix);
     format!(
         "        {{\n          \
          const raw = queryMap.get(\"{key}\");\n          \
@@ -441,7 +431,7 @@ fn query_field_insert(key: &str, ty: &Type, prefix: &str) -> String {
 }
 
 fn multipart_field_insert(key: &str, ty: &Type, prefix: &str) -> String {
-    let decode = decode_ts_expr(ty, "raw", prefix);
+    let decode = message::decode_ts_expr(ty, "raw", prefix);
     format!(
         "        {{\n          \
          const found = request.parts.find(([name]) => name === \"{key}\");\n          \
@@ -480,7 +470,7 @@ fn generated_message_build(
         }
         let key = wire_key(field);
         if is_placeholder {
-            let decode = decode_ts_expr(ty, &field_name, prefix);
+            let decode = message::decode_ts_expr(ty, &field_name, prefix);
             let _ = writeln!(setup, "        message[\"{key}\"] = {decode};");
         } else if multipart {
             setup.push_str(&multipart_field_insert(&key, ty, prefix));
@@ -496,11 +486,16 @@ fn generated_message_build(
 // ---------------------------------------------------------------------------------------------
 
 fn dispatcher_fn(service: &ServiceDef, named: &str, prefix: &str) -> String {
-    let answer = answer_fn(named, prefix);
+    let ctx = DispatcherContext {
+        named,
+        prefix,
+        has_multipart: service_declares_multipart(service),
+    };
+    let answer = answer_fn(&ctx);
     let arms = service
         .operations
         .iter()
-        .map(|operation| arm(operation, named, prefix))
+        .map(|operation| arm(operation, &ctx))
         .collect::<String>();
     format!(
         "/**\n \
@@ -530,13 +525,21 @@ fn dispatcher_fn(service: &ServiceDef, named: &str, prefix: &str) -> String {
 
 /// The shared closure every JSON-reply, multipart-reply and one-way arm answers through. Bytes,
 /// stream and `header_out` replies build their own response instead — see [`custom_reply_block`].
-fn answer_fn(named: &str, prefix: &str) -> String {
+/// Takes the whole request rather than destructured fields, so it can hand `headers` and — on a
+/// multipart service — `parts` to the dispatcher exactly as it hands the assembled payload.
+fn answer_fn(ctx: &DispatcherContext) -> String {
+    let DispatcherContext {
+        named,
+        prefix,
+        has_multipart,
+    } = *ctx;
+    let parts_arg = if has_multipart { ", request.parts" } else { "" };
     format!(
-        "  const answer = async (ctx: Ctx, operation: string, payload: unknown, okStatus: \
-         number, errorStatus: (error: unknown) => number) => {{\n    \
+        "  const answer = async (ctx: Ctx, request: {named}HttpRequest, operation: string, \
+         payload: unknown, okStatus: number, errorStatus: (error: unknown) => number) => {{\n    \
          let answered: unknown;\n    \
          try {{\n      \
-         answered = await dispatch(ctx, operation, payload);\n    \
+         answered = await dispatch(ctx, operation, payload, request.headers{parts_arg});\n    \
          }} catch (thrown) {{\n      \
          return onFault({prefix}HttpFault(\"handler-panic\", operation, thrown instanceof \
          Error ? thrown.message : String(thrown)));\n    \
@@ -564,35 +567,12 @@ fn path_token_list(path: &[PathSegment]) -> String {
         .join(", ")
 }
 
-/// The presence-only check a `part(...)` binding gets: refused where the request never carried a
-/// part by that name, exactly as the Rust `multipart_part_let` refuses a missing one. The part's
-/// own value is never read past this — see the module's own doc on why.
-fn multipart_part_presence_check(part: &MultipartPart, wire: &str, prefix: &str) -> String {
-    format!(
-        "        if (!request.parts.some(([name]) => name === \"{name}\")) {{\n          \
-         return onFault({prefix}HttpFault(\"failed-validation\", \"{wire}\", \"a required \
-         multipart part was not carried\", \"{name}\"));\n        \
-         }}\n",
-        name = part.name,
-    )
-}
-
-/// The presence-only check a required `header_in` binding gets: refused where the request never
-/// carried the header, read case-insensitively exactly as the Rust `IncomingRequest::header`
-/// reads it.
-fn header_in_presence_check(header: &HeaderIn, wire: &str, prefix: &str) -> String {
-    format!(
-        "        if (!request.headers.some(([name]) => name.toLowerCase() === \"{}\")) {{\n          \
-         return onFault({prefix}HttpFault(\"failed-validation\", \"{wire}\", \"a required \
-         header was not carried\"));\n        \
-         }}\n",
-        header.name.to_lowercase(),
-    )
-}
-
-/// One `if (method === "...") { ... }` arm: comment, path match, placeholder destructure, any
-/// `header_in`/`part(...)` presence checks, the assembled message, and the answer.
-fn arm(operation: &OperationDef, named: &str, prefix: &str) -> String {
+/// One `if (method === "...") { ... }` arm: comment, path match, placeholder destructure, the
+/// assembled message, and the answer. A bound `header_in` or `part(...)` binding is read and
+/// refused by the dispatcher itself, not here — this arm hands the request's own `headers` and
+/// `parts` through unchecked.
+fn arm(operation: &OperationDef, ctx: &DispatcherContext) -> String {
+    let prefix = ctx.prefix;
     let shape = HttpShape::of(operation);
     let mut out = arm_comment(operation, &shape);
     let _ = writeln!(out, "    if (method === \"{}\") {{", shape.method.name());
@@ -610,25 +590,9 @@ fn arm(operation: &OperationDef, named: &str, prefix: &str) -> String {
             placeholder_names.join(", ")
         );
     }
-    for header in &shape.header_in {
-        if option_inner(&header.ty).is_none() {
-            out.push_str(&header_in_presence_check(
-                header,
-                &operation.wire_name,
-                prefix,
-            ));
-        }
-    }
-    for part in &shape.multipart_parts {
-        out.push_str(&multipart_part_presence_check(
-            part,
-            &operation.wire_name,
-            prefix,
-        ));
-    }
     let (setup, message_expr) = message_build(operation, &shape, prefix);
     out.push_str(&setup);
-    out.push_str(&arm_body(operation, &shape, named, prefix, &message_expr));
+    out.push_str(&arm_body(operation, &shape, &message_expr, ctx));
     out.push_str("      }\n");
     out.push_str("    }\n");
     out
@@ -637,13 +601,12 @@ fn arm(operation: &OperationDef, named: &str, prefix: &str) -> String {
 fn arm_body(
     operation: &OperationDef,
     shape: &HttpShape,
-    named: &str,
-    prefix: &str,
     message_expr: &str,
+    ctx: &DispatcherContext,
 ) -> String {
     let OperationOutcome::Reply { error, success } = &operation.outcome else {
         return format!(
-            "        return answer(ctx, \"{}\", {message_expr}, {}, () => \
+            "        return answer(ctx, request, \"{}\", {message_expr}, {}, () => \
              {DEFAULT_BINDING_ERROR_STATUS});\n",
             operation.wire_name, shape.ok_status,
         );
@@ -653,19 +616,11 @@ fn arm_body(
     if plain_json {
         let closure = error_status_closure(shape, error);
         return format!(
-            "        return answer(ctx, \"{}\", {message_expr}, {}, {closure});\n",
+            "        return answer(ctx, request, \"{}\", {message_expr}, {}, {closure});\n",
             operation.wire_name, shape.ok_status,
         );
     }
-    custom_reply_block(
-        operation,
-        shape,
-        named,
-        prefix,
-        message_expr,
-        error,
-        success,
-    )
+    custom_reply_block(operation, shape, message_expr, error, success, ctx)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -790,16 +745,21 @@ fn generated_rule_lines(
 /// `envelope.value` ready to read on the success path, which the caller writes on.
 fn dispatch_envelope_preamble(
     wire: &str,
-    named: &str,
-    prefix: &str,
     message_expr: &str,
     success_ty: &str,
     closure: &str,
+    ctx: &DispatcherContext,
 ) -> String {
+    let DispatcherContext {
+        named,
+        prefix,
+        has_multipart,
+    } = *ctx;
+    let parts_arg = if has_multipart { ", request.parts" } else { "" };
     format!(
         "        let answered: unknown;\n        \
          try {{\n          \
-         answered = await dispatch(ctx, \"{wire}\", {message_expr});\n        \
+         answered = await dispatch(ctx, \"{wire}\", {message_expr}, request.headers{parts_arg});\n        \
          }} catch (thrown) {{\n          \
          return onFault({prefix}HttpFault(\"handler-panic\", \"{wire}\", thrown instanceof \
          Error ? thrown.message : String(thrown)));\n        \
@@ -860,17 +820,15 @@ fn header_out_entries(shape: &HttpShape, success: &Type, idents: &[String], skip
 fn bytes_reply_block(
     operation: &OperationDef,
     shape: &HttpShape,
-    named: &str,
-    prefix: &str,
     message_expr: &str,
     error: &Type,
     success: &Type,
+    ctx: &DispatcherContext,
 ) -> String {
     let wire = &operation.wire_name;
     let closure = error_status_closure(shape, error);
     let success_ty = get_field_def("value", success, "").typescript_typename();
-    let mut out =
-        dispatch_envelope_preamble(wire, named, prefix, message_expr, &success_ty, &closure);
+    let mut out = dispatch_envelope_preamble(wire, message_expr, &success_ty, &closure, ctx);
     let idents = header_out_idents(shape);
     let extra = if idents.is_empty() {
         String::new()
@@ -905,17 +863,15 @@ fn bytes_reply_block(
 fn stream_reply_block(
     operation: &OperationDef,
     shape: &HttpShape,
-    named: &str,
-    prefix: &str,
     message_expr: &str,
     error: &Type,
     success: &Type,
+    ctx: &DispatcherContext,
 ) -> String {
     let wire = &operation.wire_name;
     let closure = error_status_closure(shape, error);
     let success_ty = stream_success_ts_type(shape, success);
-    let mut out =
-        dispatch_envelope_preamble(wire, named, prefix, message_expr, &success_ty, &closure);
+    let mut out = dispatch_envelope_preamble(wire, message_expr, &success_ty, &closure, ctx);
     let idents = header_out_idents(shape);
     if idents.is_empty() {
         out.push_str("        const answer = envelope.value;\n");
@@ -956,17 +912,15 @@ fn stream_reply_block(
 fn header_out_json_reply_block(
     operation: &OperationDef,
     shape: &HttpShape,
-    named: &str,
-    prefix: &str,
     message_expr: &str,
     error: &Type,
     success: &Type,
+    ctx: &DispatcherContext,
 ) -> String {
     let wire = &operation.wire_name;
     let closure = error_status_closure(shape, error);
     let success_ty = get_field_def("value", success, "").typescript_typename();
-    let mut out =
-        dispatch_envelope_preamble(wire, named, prefix, message_expr, &success_ty, &closure);
+    let mut out = dispatch_envelope_preamble(wire, message_expr, &success_ty, &closure, ctx);
     let idents = header_out_idents(shape);
     let _ = writeln!(
         out,
@@ -980,8 +934,8 @@ fn header_out_json_reply_block(
     );
     let _ = writeln!(
         out,
-        "        return {prefix}HttpJson({}, headers, value);",
-        shape.ok_status
+        "        return {}HttpJson({}, headers, value);",
+        ctx.prefix, shape.ok_status
     );
     out
 }
@@ -989,41 +943,16 @@ fn header_out_json_reply_block(
 fn custom_reply_block(
     operation: &OperationDef,
     shape: &HttpShape,
-    named: &str,
-    prefix: &str,
     message_expr: &str,
     error: &Type,
     success: &Type,
+    ctx: &DispatcherContext,
 ) -> String {
     if matches!(shape.body_kind, BodyKind::Bytes) {
-        bytes_reply_block(
-            operation,
-            shape,
-            named,
-            prefix,
-            message_expr,
-            error,
-            success,
-        )
+        bytes_reply_block(operation, shape, message_expr, error, success, ctx)
     } else if matches!(shape.body_kind, BodyKind::Stream) {
-        stream_reply_block(
-            operation,
-            shape,
-            named,
-            prefix,
-            message_expr,
-            error,
-            success,
-        )
+        stream_reply_block(operation, shape, message_expr, error, success, ctx)
     } else {
-        header_out_json_reply_block(
-            operation,
-            shape,
-            named,
-            prefix,
-            message_expr,
-            error,
-            success,
-        )
+        header_out_json_reply_block(operation, shape, message_expr, error, success, ctx)
     }
 }

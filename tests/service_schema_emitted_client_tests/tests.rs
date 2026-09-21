@@ -11,8 +11,8 @@ use tixschema::{model_schema, service_schema};
 
 /// The full body the one streamed operation in this file answers.
 ///
-/// No `header_in` binding is declared on it: a bound header reaches no slot on the TypeScript
-/// side, so a `range` header has nowhere to arrive and the answer is always the full body.
+/// The streamed operation declares no `header_in` binding of its own, so the answer is always the
+/// full body.
 const STREAMED_CONTENT: &[u8] = b"the quick brown fox jumps over the lazy dog";
 
 /// The most [`ChunkedSlice::read`] ever answers in one call, so draining [`STREAMED_CONTENT`]
@@ -536,14 +536,71 @@ impl UploadDocumentClientService<()> for UploadDocumentBackEnd {
         if title == "toolarge" {
             return Err(UploadDocumentError::TooLarge);
         }
-        // The part's own content is never read on the TypeScript side (H9), so it plays no part
-        // in the success value the two dispatchers are compared on — only its presence does.
+        // The Node driver's own implementation never reads the part's content either (only its
+        // presence, through `description.is_some()`), so it plays no part in the success value
+        // the two dispatchers are compared on.
         assert!(
             !drained.is_empty(),
             "the file part must have drained something"
         );
         Ok(UploadDocumentResponse {
             document_id: format!("doc-{folder_id}-{title}-{}", description.is_some()),
+        })
+    }
+}
+
+/// A required `header_in` binding, so the TypeScript implementation reaches for the argument
+/// `create{Service}Dispatcher` now decodes and hands it — the Rust twin the Node driver beside
+/// this one is measured against.
+///
+/// Carries a path placeholder purely so the message is the wire scalar it binds (mirroring
+/// `purge_document`'s own shape): a bodyless `GET`/`DELETE` operation with no placeholder at all
+/// is a separate, pre-existing gap between the two message-assembly rules, filed on its own and
+/// left for that task rather than this one.
+#[model_schema()]
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EchoRangeResponse {
+    pub received: String,
+}
+
+#[model_schema()]
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case", tag = "errorCode")]
+pub enum EchoRangeError {
+    NotFound,
+}
+
+#[service_schema(transports = ["http_rest"])]
+pub trait EchoClientService<Ctx> {
+    #[service_schema_op(http(
+        method = "GET",
+        path = "/echo/{document_id}",
+        header_in("range" = byte_range),
+        error_status(NotFound = 404),
+    ))]
+    async fn echo_range(
+        &self,
+        ctx: &Ctx,
+        document_id: String,
+        byte_range: String,
+    ) -> Result<EchoRangeResponse, EchoRangeError>;
+}
+
+pub struct EchoBackEnd;
+
+impl EchoClientService<()> for EchoBackEnd {
+    async fn echo_range(
+        &self,
+        _ctx: &(),
+        document_id: String,
+        byte_range: String,
+    ) -> Result<EchoRangeResponse, EchoRangeError> {
+        ready(()).await;
+        if document_id == "missing" {
+            return Err(EchoRangeError::NotFound);
+        }
+        Ok(EchoRangeResponse {
+            received: byte_range,
         })
     }
 }
@@ -671,6 +728,18 @@ fn every_reader_form_and_query_backend_answers_as_declared() {
         Ok(SearchEcho {
             limit: None,
             verbose: None
+        })
+    );
+}
+
+/// Read only by the group beside this one, which drives it through the emitted TypeScript and
+/// the Rust dispatcher macro both.
+#[test]
+fn the_echo_backend_answers_the_header_it_was_bound() {
+    assert_eq!(
+        poll_once(EchoBackEnd.echo_range(&(), "d1".to_owned(), "bytes=0-9".to_owned())).unwrap(),
+        Ok(EchoRangeResponse {
+            received: "bytes=0-9".to_owned()
         })
     );
 }

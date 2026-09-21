@@ -36,6 +36,12 @@ mod content_http_rest_transport;
 #[path = "service_schema_emitted_client_tests/upload_document_http_rest_transport.rs"]
 mod upload_document_http_rest_transport;
 
+/// The `http_rest` dispatcher for `EchoClientService`, the Rust twin the `header_in` echo group
+/// is measured against.
+#[cfg(test)]
+#[path = "service_schema_emitted_client_tests/echo_http_rest_transport.rs"]
+mod echo_http_rest_transport;
+
 #[cfg(test)]
 #[path = "service_schema_emitted_client_tests/run_node.rs"]
 mod run_node;
@@ -66,10 +72,11 @@ mod runtime;
 // every trait and its schema module are named here for it to resolve.
 #[cfg(test)]
 use tests::{
-    ArchiveClientService, ContentClientService, ConversationClientService, GateClientService,
-    SealClientService, SearchClientService, ThumbnailClientService, UploadDocumentClientService,
-    VaultClientService, archive_client_service_schema, content_client_service_schema,
-    conversation_client_service_schema, gate_client_service_schema, seal_client_service_schema,
-    search_client_service_schema, thumbnail_client_service_schema,
-    upload_document_client_service_schema, vault_client_service_schema,
+    ArchiveClientService, ContentClientService, ConversationClientService, EchoClientService,
+    GateClientService, SealClientService, SearchClientService, ThumbnailClientService,
+    UploadDocumentClientService, VaultClientService, archive_client_service_schema,
+    content_client_service_schema, conversation_client_service_schema, echo_client_service_schema,
+    gate_client_service_schema, seal_client_service_schema, search_client_service_schema,
+    thumbnail_client_service_schema, upload_document_client_service_schema,
+    vault_client_service_schema,
 };
