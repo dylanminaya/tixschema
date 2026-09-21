@@ -11552,8 +11552,9 @@ fn collect_field_guard_errors(
         .collect()
 }
 
-/// Rejects a field that reaches `u64` or `usize` at any depth, under the `kotlin` feature: Kotlin's
-/// widest unsigned width is `UInt`, and a pointer-sized width has no Kotlin counterpart at all.
+/// Rejects a field that reaches `u64` or `usize` at any depth, under the `kotlin` feature. Kotlin
+/// has a `ULong` that could carry `u64`; the refusal exists instead for parity with the Swift
+/// target, which refuses the same two widths.
 #[cfg(feature = "kotlin")]
 fn check_kotlin_width_field(
     field: &Field,
