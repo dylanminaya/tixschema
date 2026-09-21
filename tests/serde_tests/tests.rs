@@ -12,6 +12,7 @@ enum Color {
 
 /// The internally tagged form's canonical error type: every variant a unit, the tag renamed and
 /// the variant names kebab-cased.
+#[cfg(feature = "typescript")]
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case", tag = "errorCode")]
