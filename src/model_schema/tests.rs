@@ -927,7 +927,7 @@ fn untagged_member_prop_guards_apply() {
             "requires an Option<T> field",
         ),
         (
-            quote::quote! { #[model_schema_prop(as = String)] name: u64 },
+            quote::quote! { #[model_schema_prop(as = String)] name: i64 },
             "as = String",
         ),
     ] {
@@ -3579,6 +3579,52 @@ fn the_constraint_docs_are_silent_for_a_parameter_typed_field() {
     );
 }
 
+/// `u64` and `usize` have no Kotlin mapping, refused with the same message and consequence the
+/// Swift target's own width refusal carries.
+#[cfg(feature = "kotlin")]
+#[test]
+fn a_kotlin_field_reaching_u64_or_usize_is_refused() {
+    for (ty, width) in [
+        (quote::quote! { u64 }, "u64"),
+        (quote::quote! { usize }, "usize"),
+        (quote::quote! { Vec<u64> }, "u64"),
+        (quote::quote! { HashMap<String, usize> }, "usize"),
+        (quote::quote! { (String, u64) }, "u64"),
+    ] {
+        let errors = field_prop_guard_errors(&syn::parse_quote! {
+            struct Report {
+                count: #ty,
+            }
+        });
+        assert_eq!(errors.len(), 1, "for {ty}: {errors:?}");
+        let message = format!(
+            "field `count`: `{width}` has no Kotlin mapping; the Kotlin target refuses unsigned \
+             64-bit and pointer-sized integers"
+        );
+        assert!(
+            errors[0].contains(&message),
+            "for {ty}, expected {message:?}, got: {}",
+            errors[0]
+        );
+    }
+}
+
+/// A field written at one of the enclosing item's own type parameters is never refused: Kotlin
+/// generics are opaque to the class that declares them, exactly like TypeScript's and Zod's own.
+#[cfg(feature = "kotlin")]
+#[test]
+fn a_kotlin_type_parameter_is_never_refused_even_when_it_could_be_filled_with_u64() {
+    let errors = field_prop_guard_errors_in_scope(
+        &syn::parse_quote! {
+            struct Wrapper<T> {
+                value: T,
+            }
+        },
+        &["T".to_owned()],
+    );
+    assert_eq!(errors.len(), 0, "got: {errors:?}");
+}
+
 /// `as` names the type the field already renders or it names nothing the expansion can honor: the
 /// surfaces are written from the declared type, and no second reading of the wire exists here.
 #[test]
@@ -3586,11 +3632,11 @@ fn an_as_naming_another_type_is_refused() {
     let errors = field_prop_guard_errors(&syn::parse_quote! {
         struct Report {
             #[model_schema_prop(as = String)]
-            id: u64,
+            id: i64,
         }
     });
     assert_eq!(errors.len(), 1, "got: {errors:?}");
-    for needle in ["compile_error", "field `id`", "as = String", "u64"] {
+    for needle in ["compile_error", "field `id`", "as = String", "i64"] {
         assert!(
             errors[0].contains(needle),
             "{needle} missing: {}",

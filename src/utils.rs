@@ -1064,7 +1064,8 @@ fn collect_doc_lines(attrs: &[Attribute]) -> Option<Vec<String>> {
     feature = "jsonschema",
     feature = "serde",
     feature = "dart",
-    feature = "swift"
+    feature = "swift",
+    feature = "kotlin"
 ))]
 pub fn to_snake_case(name: &str) -> String {
     let mut result = String::new();

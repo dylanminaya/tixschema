@@ -26,6 +26,9 @@ pub mod dart;
 #[cfg(feature = "swift")]
 pub mod swift;
 
+#[cfg(feature = "kotlin")]
+pub mod kotlin;
+
 /// Module for parsing model_schema_prop attributes
 pub mod model_schema_prop;
 
@@ -68,6 +71,9 @@ impl Features {
         if Self::has_swift() {
             features.push("swift");
         }
+        if Self::has_kotlin() {
+            features.push("kotlin");
+        }
 
         if features.is_empty() {
             features.push("minimal");
@@ -89,6 +95,11 @@ impl Features {
     /// Check if jsonschema feature is enabled.
     pub const fn has_jsonschema() -> bool {
         cfg!(feature = "jsonschema")
+    }
+
+    /// Check if `kotlin` feature is enabled.
+    pub const fn has_kotlin() -> bool {
+        cfg!(feature = "kotlin")
     }
 
     /// Check if `object_id` feature is enabled.
