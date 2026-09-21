@@ -104,7 +104,10 @@ typecheck-ts:
 test-emitted:
     @command -v "${TIXSCHEMA_NODE:-node}" >/dev/null 2>&1 || { echo "No node: put \`node\` on PATH, or set TIXSCHEMA_NODE to one." >&2; exit 1; }
     @echo "Running the emitted TypeScript client with $(command -v "${TIXSCHEMA_NODE:-node}")..."
-    TIXSCHEMA_NODE="$(command -v "${TIXSCHEMA_NODE:-node}")" cargo test --test service_schema_emitted_client_tests run_node
+    TIXSCHEMA_NODE="$(command -v "${TIXSCHEMA_NODE:-node}")" cargo test --test service_schema_emitted_client_tests run_node::
+    @test -n "${TIXSCHEMA_NODE_MODULES:-}" && [ -d "${TIXSCHEMA_NODE_MODULES}/node_modules/ws" ] && [ -d "${TIXSCHEMA_NODE_MODULES}/node_modules/zod" ] || { echo "No ws/zod: set TIXSCHEMA_NODE_MODULES to a directory whose node_modules holds ws and zod." >&2; exit 1; }
+    @echo "Running the emitted WebSocket server with $(command -v "${TIXSCHEMA_NODE:-node}")..."
+    TIXSCHEMA_NODE="$(command -v "${TIXSCHEMA_NODE:-node}")" cargo test --test service_schema_emitted_client_tests run_node_ws_server
     @command -v "${TIXSCHEMA_DART:-dart}" >/dev/null 2>&1 || { echo "No Dart SDK: put \`dart\` on PATH, or set TIXSCHEMA_DART to one." >&2; exit 1; }
     @echo "Running the emitted Dart client with $(command -v "${TIXSCHEMA_DART:-dart}")..."
     TIXSCHEMA_DART="$(command -v "${TIXSCHEMA_DART:-dart}")" cargo test --all-features --test service_schema_emitted_client_tests run_dart

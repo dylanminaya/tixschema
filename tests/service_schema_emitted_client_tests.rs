@@ -23,6 +23,10 @@ mod tests;
 mod run_node;
 
 #[cfg(test)]
+#[path = "service_schema_emitted_client_tests/run_node_ws_server.rs"]
+mod run_node_ws_server;
+
+#[cfg(test)]
 #[path = "service_schema_emitted_client_tests/run_dart.rs"]
 mod run_dart;
 
