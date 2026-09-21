@@ -258,6 +258,22 @@ pub(super) fn dart_success_type(operation: &OperationDef, shape: &HttpShape) -> 
     }
 }
 
+/// Whether a reply operation's success carries nothing at all — the same condition
+/// [`dart_success_type`] answers `"void"` for, so the pair and the clients cannot disagree about
+/// what a unit success carries.
+pub(super) fn carries_no_value(operation: &OperationDef, shape: &HttpShape) -> bool {
+    let OperationOutcome::Reply {
+        success,
+        error: _error,
+    } = &operation.outcome
+    else {
+        return false;
+    };
+    matches!(shape.body_kind, BodyKind::Json | BodyKind::Multipart)
+        && shape.header_out.is_empty()
+        && is_unit_type(success)
+}
+
 fn method(
     named: &str,
     fn_prefix: &str,
@@ -771,7 +787,7 @@ fn success_decode_block(
     // operation's own body kind is a request-side concern only.
     if shape.header_out.is_empty() {
         if is_unit_type(success) {
-            return format!("      return {result}Ok(null);\n");
+            return format!("      return {result}Ok();\n");
         }
         let success_ty = dart_type_of(success);
         return format!(

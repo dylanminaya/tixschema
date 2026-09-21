@@ -6,7 +6,8 @@
 
 use super::{
     DART_BYTES_HEADER_OUT_SERVICE, DART_HTTP_SERVICE, DART_MULTIPART_HTTP_SERVICE,
-    DART_SINGLE_PLACEHOLDER_HTTP_SERVICE, DART_STREAM_HTTP_SERVICE, dart_http_client_of,
+    DART_SINGLE_PLACEHOLDER_HTTP_SERVICE, DART_STREAM_HTTP_SERVICE, DART_UNIT_SUCCESS_HTTP_SERVICE,
+    dart_http_client_of,
 };
 
 /// The body of one method, from its own doc comment through the closing brace of the method
@@ -640,4 +641,15 @@ fn a_header_vec_of_options_narrows_its_element_without_spelling_the_null_away() 
          `!` there is `unnecessary_non_null_assertion`, the same diagnostic the binding's own \
          parameter was changed to stop raising. Got: {method}"
     );
+}
+
+#[test]
+fn a_unit_success_answers_the_field_less_ok_member() {
+    let written = dart_http_client_of(DART_UNIT_SUCCESS_HTTP_SERVICE);
+    let method = method_body(&written, "ping");
+    assert!(
+        method.contains("return PingClientServicePingResultOk();"),
+        "got: {method}"
+    );
+    assert!(!method.contains("ResultOk(null)"), "got: {method}");
 }
