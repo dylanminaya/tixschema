@@ -49,12 +49,12 @@
 //!   type, the fault kind and fields, and one [`dart_result`] pair per operation that answers
 //!   (published only where the `dart` feature is on).
 //! - `dart_http_client()`: the Dart sibling of `ts_http_client()` — the same `http_rest` seam and
-//!   per-operation client, in Dart, over the `dart` feature's own types and codec rather than Zod,
-//!   and throwing on failure rather than returning a result union (published only where the `dart`
-//!   feature is on).
+//!   per-operation client, in Dart, over the `dart` feature's own types and codec rather than Zod;
+//!   a reply method answers [`dart_result`]'s own sealed pair rather than throwing (published only
+//!   where the `dart` feature is on).
 //! - `dart_ws_client()`: the Dart `ws_rpc` sibling — a transport over a sink and a stream, the
-//!   per-operation client, and a dispatcher attachment for a service the app implements (published
-//!   only where the `dart` feature is on).
+//!   per-operation client answering the same sealed pair as `dart_http_client()`, and a dispatcher
+//!   attachment for a service the app implements (published only where the `dart` feature is on).
 //!
 //! # The client and the dispatcher exist only where the Zod surface does
 //!
@@ -169,15 +169,15 @@ fn dart_seam(service: &ServiceDef) -> TokenStream {
             [#(#definition),*].join("\n\n")
         }
 
-        #[doc = " The service's generated Dart `http_rest` client: the transport seam, the"]
-        #[doc = " exceptions a call throws, and the client class."]
+        #[doc = " The service's generated Dart `http_rest` client: the transport seam, the client"]
+        #[doc = " class, and the one-way refusal a call still throws."]
         pub fn dart_http_client() -> String {
             #client.to_owned()
         }
 
         #[doc = " The service's generated Dart `ws_rpc` client: the transport over a sink and a"]
-        #[doc = " stream, the client class, the exceptions a call throws, and the dispatcher"]
-        #[doc = " attachment."]
+        #[doc = " stream, the client class, the one-way refusal a call still throws, and the"]
+        #[doc = " dispatcher attachment."]
         pub fn dart_ws_client() -> String {
             #ws_client.to_owned()
         }
