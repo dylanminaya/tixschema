@@ -41,15 +41,18 @@ async function until(predicate, timeoutMs = 2000) {
 
 /// `window` answers the two-field page every scenario reads off; a `conversation_id` of
 /// `"slow-4"` is scenario 4's own hook to hold the handler open past the client's close, so it can
-/// observe the connection's cancellation signal once the sleep ends.
+/// observe the connection's cancellation signal directly rather than racing a fixed sleep against it.
 const IMPL_AND_MAKE_SERVER: &str = r#"
 let lastHandlerSawAborted;
+let handlerReturned;
+const handlerDone = new Promise((resolve) => { handlerReturned = resolve; });
 const impl = {
   async purgeConversation() {},
   async window(ctx, req) {
     if (req.conversation_id === "slow-4") {
-      await sleep(300);
+      await until(() => ctx.signal.aborted, 2000);
       lastHandlerSawAborted = ctx.signal.aborted;
+      handlerReturned();
       return { ok: true, value: { items: ["slow"] } };
     }
     return { ok: true, value: { items: [req.conversation_id, "connection " + ctx.n] } };
@@ -166,7 +169,7 @@ async function main() {
 main().catch((error) => { console.error(error); process.exit(1); });
 "#;
 
-/// Scenario 4: a client closing 100 ms into a 300 ms handler leaves the connection's signal
+/// Scenario 4: a client closing 100 ms into an in-flight handler leaves the connection's signal
 /// aborted, the handler observes it, and the raw socket's `send` is never called again afterward.
 const SCENARIO_4_DRIVER: &str = r#"
 async function main() {
@@ -194,7 +197,8 @@ async function main() {
   await until(() => capturedConnection.signal.aborted);
   const connectionAborted = capturedConnection.signal.aborted;
   const sendCallsAtAbort = sendCalls;
-  await sleep(250);
+  await handlerDone;
+  await sleep(20);
   const sendCallsAfterHandler = sendCalls;
   wss.close();
   console.log(JSON.stringify({
