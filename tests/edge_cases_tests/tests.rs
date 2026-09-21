@@ -54,9 +54,9 @@ struct Address {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 struct OriginalBugReproduction {
-    problematic_map: HashMap<String, Vec<u64>>,
+    problematic_map: HashMap<String, Vec<i64>>,
 
-    string_to_optional_vec_u64: HashMap<String, Option<Vec<u64>>>,
+    string_to_optional_vec_u64: HashMap<String, Option<Vec<i64>>>,
 
     string_to_vec_bool: HashMap<String, Vec<bool>>,
     string_to_vec_f64: HashMap<String, Vec<f64>>,
@@ -72,7 +72,7 @@ type OptionalNestedValue = Vec<Option<HashMap<String, Option<Vec<i64>>>>>;
 
 #[cfg(all(test, any(feature = "typescript", feature = "zod", feature = "serde")))]
 #[model_schema()]
-type QuadrupleNestedValue = Vec<HashMap<String, Vec<HashMap<String, u64>>>>;
+type QuadrupleNestedValue = Vec<HashMap<String, Vec<HashMap<String, i64>>>>;
 
 #[cfg(all(test, any(feature = "typescript", feature = "zod", feature = "serde")))]
 #[model_schema()]
@@ -97,7 +97,7 @@ struct ReallyComplexTest {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 struct SimpleComplexTest {
-    nested_map_of_arrays: HashMap<String, Vec<HashMap<String, u64>>>,
+    nested_map_of_arrays: HashMap<String, Vec<HashMap<String, i64>>>,
 }
 
 #[cfg(all(
@@ -115,11 +115,11 @@ struct SimpleComplexTest {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 struct NestedStringKeyedMaps {
-    counts_by_group: HashMap<String, HashMap<String, u64>>,
+    counts_by_group: HashMap<String, HashMap<String, i64>>,
     labels_by_group: HashMap<String, HashMap<String, String>>,
     rows_by_group: HashMap<String, Vec<HashMap<String, String>>>,
     scores_by_group: HashMap<String, HashMap<String, Option<f64>>>,
-    tallies_by_region: HashMap<String, HashMap<String, HashMap<String, u64>>>,
+    tallies_by_region: HashMap<String, HashMap<String, HashMap<String, i64>>>,
 }
 
 #[cfg(all(

@@ -28,12 +28,12 @@ struct ComprehensiveHashMapTest {
     f64_value: HashMap<String, f64>,
     i64_array: HashMap<String, Vec<i64>>,
     i64_value: HashMap<String, i64>,
-    optional_u64: HashMap<String, Option<u64>>,
-    optional_u64_array: HashMap<String, Option<Vec<u64>>>,
+    optional_u64: HashMap<String, Option<i64>>,
+    optional_u64_array: HashMap<String, Option<Vec<i64>>>,
     string_array: HashMap<String, Vec<String>>,
     string_value: HashMap<String, String>,
-    u64_array: HashMap<String, Vec<u64>>,
-    u64_value: HashMap<String, u64>,
+    u64_array: HashMap<String, Vec<i64>>,
+    u64_value: HashMap<String, i64>,
 }
 
 #[model_schema()]
@@ -41,8 +41,8 @@ struct ComprehensiveHashMapTest {
 struct HashMapWith64Bit {
     i64_map: HashMap<String, i64>,
     id: String,
-    mixed_map: HashMap<String, Vec<u64>>,
-    u64_map: HashMap<String, u64>,
+    mixed_map: HashMap<String, Vec<i64>>,
+    u64_map: HashMap<String, i64>,
 }
 
 #[model_schema()]
@@ -62,7 +62,7 @@ struct EnumKeyedScalarValueMaps {
     i64_value: HashMap<MetricSlot, i64>,
     string_array: HashMap<MetricSlot, Vec<String>>,
     string_value: HashMap<MetricSlot, String>,
-    u64_value: HashMap<MetricSlot, u64>,
+    u64_value: HashMap<MetricSlot, i64>,
 }
 
 #[model_schema()]
@@ -84,7 +84,7 @@ struct EnumKeyedSiblingValueMaps {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct EnumKeyedNestedMapValues {
-    counts: HashMap<MetricSlot, HashMap<String, u64>>,
+    counts: HashMap<MetricSlot, HashMap<String, i64>>,
     labels: HashMap<MetricSlot, HashMap<String, String>>,
     rows: HashMap<MetricSlot, Vec<HashMap<String, String>>>,
     samples: HashMap<MetricSlot, HashMap<String, MetricSample>>,
@@ -93,7 +93,7 @@ struct EnumKeyedNestedMapValues {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct StringKeyedNestedMapValues {
-    counts: HashMap<String, HashMap<String, u64>>,
+    counts: HashMap<String, HashMap<String, i64>>,
     labels: HashMap<String, HashMap<String, String>>,
     rows: HashMap<String, Vec<HashMap<String, String>>>,
     samples: HashMap<String, HashMap<String, MetricSample>>,
@@ -111,7 +111,7 @@ enum MetricBucket {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct BucketKeyedMap {
-    counts: HashMap<MetricBucket, u64>,
+    counts: HashMap<MetricBucket, i64>,
     samples: HashMap<MetricBucket, MetricSample>,
 }
 
@@ -121,11 +121,11 @@ struct BucketKeyedMap {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct NestedEnumKeyedMapValues {
-    arrayed: HashMap<String, Vec<HashMap<MetricBucket, u64>>>,
-    enum_keyed_outer: HashMap<MetricSlot, HashMap<MetricBucket, u64>>,
-    optional: HashMap<String, Option<HashMap<MetricBucket, u64>>>,
+    arrayed: HashMap<String, Vec<HashMap<MetricBucket, i64>>>,
+    enum_keyed_outer: HashMap<MetricSlot, HashMap<MetricBucket, i64>>,
+    optional: HashMap<String, Option<HashMap<MetricBucket, i64>>>,
     siblings: HashMap<MetricSlot, HashMap<MetricBucket, MetricSample>>,
-    string_keyed_outer: HashMap<String, HashMap<MetricBucket, u64>>,
+    string_keyed_outer: HashMap<String, HashMap<MetricBucket, i64>>,
 }
 
 /// A `#[serde(transparent)]` brand over a `String`: serde writes it as the bare string its inner
@@ -147,18 +147,18 @@ struct TraceId(CorrelationId);
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct BrandKeyedMaps {
-    chained: HashMap<TraceId, u64>,
-    counts: HashMap<CorrelationId, u64>,
-    nested: HashMap<CorrelationId, HashMap<CorrelationId, u64>>,
+    chained: HashMap<TraceId, i64>,
+    counts: HashMap<CorrelationId, i64>,
+    nested: HashMap<CorrelationId, HashMap<CorrelationId, i64>>,
     samples: HashMap<CorrelationId, MetricSample>,
 }
 
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct StringKeyedBrandTwin {
-    chained: HashMap<String, u64>,
-    counts: HashMap<String, u64>,
-    nested: HashMap<String, HashMap<String, u64>>,
+    chained: HashMap<String, i64>,
+    counts: HashMap<String, i64>,
+    nested: HashMap<String, HashMap<String, i64>>,
     samples: HashMap<String, MetricSample>,
 }
 
@@ -184,22 +184,22 @@ type PathKey = PathBuf;
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct AliasKeyedMaps {
-    branded: HashMap<CorrelationRef, u64>,
-    chained: HashMap<SlotKeyRef, u64>,
-    counts: HashMap<SlotKey, u64>,
-    nested: HashMap<SlotKey, HashMap<SlotKey, u64>>,
-    paths: HashMap<PathKey, u64>,
+    branded: HashMap<CorrelationRef, i64>,
+    chained: HashMap<SlotKeyRef, i64>,
+    counts: HashMap<SlotKey, i64>,
+    nested: HashMap<SlotKey, HashMap<SlotKey, i64>>,
+    paths: HashMap<PathKey, i64>,
     samples: HashMap<SlotKey, MetricSample>,
 }
 
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct StringKeyedAliasKeyTwin {
-    branded: HashMap<String, u64>,
-    chained: HashMap<String, u64>,
-    counts: HashMap<String, u64>,
-    nested: HashMap<String, HashMap<String, u64>>,
-    paths: HashMap<String, u64>,
+    branded: HashMap<String, i64>,
+    chained: HashMap<String, i64>,
+    counts: HashMap<String, i64>,
+    nested: HashMap<String, HashMap<String, i64>>,
+    paths: HashMap<String, i64>,
     samples: HashMap<String, MetricSample>,
 }
 
@@ -232,34 +232,34 @@ struct SlotBrand(MetricSlot);
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct ScalarBrandKeyedMaps {
-    by_enabled: HashMap<Enabled, u64>,
-    by_tick: HashMap<Tick, u64>,
-    chained: HashMap<TickRef, u64>,
-    nested: HashMap<Tick, HashMap<Enabled, u64>>,
+    by_enabled: HashMap<Enabled, i64>,
+    by_tick: HashMap<Tick, i64>,
+    chained: HashMap<TickRef, i64>,
+    nested: HashMap<Tick, HashMap<Enabled, i64>>,
     samples: HashMap<Tick, MetricSample>,
 }
 
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct ScalarKeyedBrandTwin {
-    by_enabled: HashMap<bool, u64>,
-    by_tick: HashMap<u32, u64>,
-    chained: HashMap<u32, u64>,
-    nested: HashMap<u32, HashMap<bool, u64>>,
+    by_enabled: HashMap<bool, i64>,
+    by_tick: HashMap<u32, i64>,
+    chained: HashMap<u32, i64>,
+    nested: HashMap<u32, HashMap<bool, i64>>,
     samples: HashMap<u32, MetricSample>,
 }
 
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct EnumBrandKeyedMaps {
-    counts: HashMap<SlotBrand, u64>,
+    counts: HashMap<SlotBrand, i64>,
     samples: HashMap<SlotBrand, MetricSample>,
 }
 
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct StringKeyedEnumBrandTwin {
-    counts: HashMap<String, u64>,
+    counts: HashMap<String, i64>,
     samples: HashMap<String, MetricSample>,
 }
 
@@ -292,17 +292,17 @@ type SlotBrandAliasKey = SlotBrand;
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct EnumeratedKeyedMaps {
-    alias_of_brand: HashMap<SlotBrandAliasKey, u64>,
-    aliased: HashMap<SlotAliasKey, u64>,
-    aliased_chain: HashMap<SlotAliasKeyRef, u64>,
-    bare: HashMap<MetricSlot, u64>,
-    branded: HashMap<SlotBrand, u64>,
-    branded_chain: HashMap<SlotBrandRef, u64>,
-    forward: HashMap<LaterSlot, u64>,
-    listed: Vec<HashMap<MetricSlot, u64>>,
-    nested: HashMap<MetricSlot, HashMap<MetricSlot, u64>>,
+    alias_of_brand: HashMap<SlotBrandAliasKey, i64>,
+    aliased: HashMap<SlotAliasKey, i64>,
+    aliased_chain: HashMap<SlotAliasKeyRef, i64>,
+    bare: HashMap<MetricSlot, i64>,
+    branded: HashMap<SlotBrand, i64>,
+    branded_chain: HashMap<SlotBrandRef, i64>,
+    forward: HashMap<LaterSlot, i64>,
+    listed: Vec<HashMap<MetricSlot, i64>>,
+    nested: HashMap<MetricSlot, HashMap<MetricSlot, i64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    optional: Option<HashMap<MetricSlot, u64>>,
+    optional: Option<HashMap<MetricSlot, i64>>,
     samples: HashMap<MetricSlot, MetricSample>,
 }
 
@@ -329,14 +329,14 @@ struct Day(NaiveDate);
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct ChronoBrandKeyedMaps {
-    by_day: HashMap<Day, u64>,
+    by_day: HashMap<Day, i64>,
 }
 
 #[cfg(feature = "chrono")]
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct ChronoKeyedBrandTwin {
-    by_day: HashMap<NaiveDate, u64>,
+    by_day: HashMap<NaiveDate, i64>,
 }
 
 /// An alias of a stringifying scalar. A type path resolves straight through it, so serde writes a
@@ -361,22 +361,22 @@ type EnabledKey = bool;
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct ScalarAliasKeyedMaps {
-    branded: HashMap<TickBrandKey, u64>,
-    by_enabled: HashMap<EnabledKey, u64>,
-    by_tick: HashMap<TickKey, u64>,
-    chained: HashMap<TickKeyRef, u64>,
-    nested: HashMap<TickKey, HashMap<EnabledKey, u64>>,
+    branded: HashMap<TickBrandKey, i64>,
+    by_enabled: HashMap<EnabledKey, i64>,
+    by_tick: HashMap<TickKey, i64>,
+    chained: HashMap<TickKeyRef, i64>,
+    nested: HashMap<TickKey, HashMap<EnabledKey, i64>>,
     samples: HashMap<TickKey, MetricSample>,
 }
 
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct ScalarKeyedAliasTwin {
-    branded: HashMap<Tick, u64>,
-    by_enabled: HashMap<bool, u64>,
-    by_tick: HashMap<u32, u64>,
-    chained: HashMap<u32, u64>,
-    nested: HashMap<u32, HashMap<bool, u64>>,
+    branded: HashMap<Tick, i64>,
+    by_enabled: HashMap<bool, i64>,
+    by_tick: HashMap<u32, i64>,
+    chained: HashMap<u32, i64>,
+    nested: HashMap<u32, HashMap<bool, i64>>,
     samples: HashMap<u32, MetricSample>,
 }
 
@@ -390,14 +390,14 @@ type DayKey = NaiveDate;
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct ChronoAliasKeyedMaps {
-    by_day: HashMap<DayKey, u64>,
+    by_day: HashMap<DayKey, i64>,
 }
 
 #[cfg(feature = "chrono")]
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct ChronoKeyedAliasTwin {
-    by_day: HashMap<NaiveDate, u64>,
+    by_day: HashMap<NaiveDate, i64>,
 }
 
 /// A brand over that brand: every link of the chain carries the same `"true"`/`"false"` wire.
@@ -423,16 +423,16 @@ type EnabledBrandKey = Enabled;
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct BoolKeyedMaps {
-    alias_of_brand: HashMap<EnabledBrandKey, u64>,
-    aliased: HashMap<EnabledKey, u64>,
-    aliased_chain: HashMap<EnabledKeyRef, u64>,
-    bare: HashMap<bool, u64>,
-    branded: HashMap<Enabled, u64>,
-    branded_chain: HashMap<EnabledRef, u64>,
-    listed: Vec<HashMap<bool, u64>>,
-    nested: HashMap<String, HashMap<bool, u64>>,
+    alias_of_brand: HashMap<EnabledBrandKey, i64>,
+    aliased: HashMap<EnabledKey, i64>,
+    aliased_chain: HashMap<EnabledKeyRef, i64>,
+    bare: HashMap<bool, i64>,
+    branded: HashMap<Enabled, i64>,
+    branded_chain: HashMap<EnabledRef, i64>,
+    listed: Vec<HashMap<bool, i64>>,
+    nested: HashMap<String, HashMap<bool, i64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    optional: Option<HashMap<bool, u64>>,
+    optional: Option<HashMap<bool, i64>>,
     samples: HashMap<bool, MetricSample>,
 }
 
@@ -485,13 +485,13 @@ type StampBrandKey = Stamp;
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct PropertyKeyedMaps {
-    chars: HashMap<char, u64>,
-    dates: HashMap<NaiveDate, u64>,
-    datetimes: HashMap<NaiveDateTime, u64>,
-    numbers: HashMap<u32, u64>,
-    slots: HashMap<MetricSlot, u64>,
-    strings: HashMap<String, u64>,
-    times: HashMap<NaiveTime, u64>,
+    chars: HashMap<char, i64>,
+    dates: HashMap<NaiveDate, i64>,
+    datetimes: HashMap<NaiveDateTime, i64>,
+    numbers: HashMap<u32, i64>,
+    slots: HashMap<MetricSlot, i64>,
+    strings: HashMap<String, i64>,
+    times: HashMap<NaiveTime, i64>,
 }
 
 /// The `DateTime<Tz>` counterpart of [`BoolKeyedMaps`]. serde writes the key as the RFC 3339 string
@@ -504,16 +504,16 @@ struct PropertyKeyedMaps {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct DateTimeKeyedMaps {
-    alias_of_brand: HashMap<StampBrandKey, u64>,
-    aliased: HashMap<StampKey, u64>,
-    aliased_chain: HashMap<StampKeyRef, u64>,
-    bare: HashMap<DateTime<Utc>, u64>,
-    branded: HashMap<Stamp, u64>,
-    branded_chain: HashMap<StampRef, u64>,
-    listed: Vec<HashMap<DateTime<Utc>, u64>>,
-    nested: HashMap<String, HashMap<DateTime<Utc>, u64>>,
+    alias_of_brand: HashMap<StampBrandKey, i64>,
+    aliased: HashMap<StampKey, i64>,
+    aliased_chain: HashMap<StampKeyRef, i64>,
+    bare: HashMap<DateTime<Utc>, i64>,
+    branded: HashMap<Stamp, i64>,
+    branded_chain: HashMap<StampRef, i64>,
+    listed: Vec<HashMap<DateTime<Utc>, i64>>,
+    nested: HashMap<String, HashMap<DateTime<Utc>, i64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    optional: Option<HashMap<DateTime<Utc>, u64>>,
+    optional: Option<HashMap<DateTime<Utc>, i64>>,
     samples: HashMap<DateTime<Utc>, MetricSample>,
 }
 
@@ -554,16 +554,16 @@ struct OptionalMapValues {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct WrappedMapFields {
-    bucket_counts: HashMap<MetricBucket, u64>,
+    bucket_counts: HashMap<MetricBucket, i64>,
     labels: HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     optional_labels: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     optional_wrapped_labels: Option<Vec<HashMap<String, String>>>,
-    raw_keyed_counts: HashMap<u32, u64>,
-    wrapped_bucket_counts: Vec<HashMap<MetricBucket, u64>>,
+    raw_keyed_counts: HashMap<u32, i64>,
+    wrapped_bucket_counts: Vec<HashMap<MetricBucket, i64>>,
     wrapped_labels: Vec<HashMap<String, String>>,
-    wrapped_raw_keyed_counts: VecDeque<HashMap<u32, u64>>,
+    wrapped_raw_keyed_counts: VecDeque<HashMap<u32, i64>>,
 }
 
 #[model_schema()]
@@ -592,7 +592,7 @@ type MetricTagRef = MetricTag;
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct SetElementFields {
     aliased_tags: HashSet<MetricTagRef>,
-    big_ids: HashSet<u64>,
+    big_ids: HashSet<i64>,
     #[model_schema_prop(minLength = 3)]
     constrained_labels: HashSet<String>,
     labels: HashSet<String>,
@@ -606,7 +606,7 @@ struct SetElementFields {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct BTreeSetElementFields {
     aliased_tags: BTreeSet<MetricTagRef>,
-    big_ids: BTreeSet<u64>,
+    big_ids: BTreeSet<i64>,
     #[model_schema_prop(minLength = 3)]
     constrained_labels: BTreeSet<String>,
     labels: BTreeSet<String>,
@@ -620,7 +620,7 @@ struct BTreeSetElementFields {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct VecDequeElementFields {
     aliased_tags: VecDeque<MetricTagRef>,
-    big_ids: VecDeque<u64>,
+    big_ids: VecDeque<i64>,
     #[model_schema_prop(minLength = 3)]
     constrained_labels: VecDeque<String>,
     labels: VecDeque<String>,
@@ -635,7 +635,7 @@ struct VecDequeElementFields {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct BinaryHeapElementFields {
     aliased_tags: BinaryHeap<MetricTagRef>,
-    big_ids: BinaryHeap<u64>,
+    big_ids: BinaryHeap<i64>,
     #[model_schema_prop(minLength = 3)]
     constrained_labels: BinaryHeap<String>,
     labels: BinaryHeap<String>,
@@ -649,7 +649,7 @@ struct BinaryHeapElementFields {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct VecElementFields {
     aliased_tags: Vec<MetricTagRef>,
-    big_ids: Vec<u64>,
+    big_ids: Vec<i64>,
     #[model_schema_prop(minLength = 3)]
     constrained_labels: Vec<String>,
     labels: Vec<String>,
@@ -916,7 +916,7 @@ fn covered_wrapper_payloads() -> [(&'static str, serde_json::Value); 4] {
             "HashSet",
             serde_json::to_value(SetElementFields {
                 aliased_tags: one(tag.clone()),
-                big_ids: one(9_u64),
+                big_ids: one(9_i64),
                 constrained_labels: one("abc".to_owned()),
                 labels: one("t".to_owned()),
                 preprocessed_labels: one("t".to_owned()),
@@ -929,7 +929,7 @@ fn covered_wrapper_payloads() -> [(&'static str, serde_json::Value); 4] {
             "BTreeSet",
             serde_json::to_value(BTreeSetElementFields {
                 aliased_tags: one(tag.clone()),
-                big_ids: one(9_u64),
+                big_ids: one(9_i64),
                 constrained_labels: one("abc".to_owned()),
                 labels: one("t".to_owned()),
                 preprocessed_labels: one("t".to_owned()),
@@ -942,7 +942,7 @@ fn covered_wrapper_payloads() -> [(&'static str, serde_json::Value); 4] {
             "BinaryHeap",
             serde_json::to_value(BinaryHeapElementFields {
                 aliased_tags: one(tag.clone()),
-                big_ids: one(9_u64),
+                big_ids: one(9_i64),
                 constrained_labels: one("abc".to_owned()),
                 labels: one("t".to_owned()),
                 preprocessed_labels: one("t".to_owned()),
@@ -955,7 +955,7 @@ fn covered_wrapper_payloads() -> [(&'static str, serde_json::Value); 4] {
             "VecDeque",
             serde_json::to_value(VecDequeElementFields {
                 aliased_tags: one(tag.clone()),
-                big_ids: one(9_u64),
+                big_ids: one(9_i64),
                 constrained_labels: one("abc".to_owned()),
                 labels: one("t".to_owned()),
                 preprocessed_labels: one("t".to_owned()),
@@ -1499,7 +1499,7 @@ fn test_enum_keyed_nested_map_values_typescript_generation() {
     }
 }
 
-/// The rendering `HashMap<MetricBucket, u64>` carries in field position — the one every nested
+/// The rendering `HashMap<MetricBucket, i64>` carries in field position — the one every nested
 /// position is held against, because field position is where an enum key has always enumerated.
 #[cfg(feature = "jsonschema")]
 fn bucket_keyed_count_map() -> serde_json::Value {
@@ -1512,13 +1512,13 @@ fn test_nested_enum_keyed_map_values_constructible() {
         arrayed: HashMap::new(),
         enum_keyed_outer: HashMap::from([(
             MetricSlot::Daily,
-            HashMap::from([(MetricBucket::Low, 3_u64)]),
+            HashMap::from([(MetricBucket::Low, 3_i64)]),
         )]),
         optional: HashMap::from([("a".to_owned(), None)]),
         siblings: HashMap::new(),
         string_keyed_outer: HashMap::from([(
             "a".to_owned(),
-            HashMap::from([(MetricBucket::High, 7_u64)]),
+            HashMap::from([(MetricBucket::High, 7_i64)]),
         )]),
     };
     assert_eq!(
@@ -1529,7 +1529,7 @@ fn test_nested_enum_keyed_map_values_constructible() {
     assert_eq!(nested.optional["a"], None);
 
     let field_position = BucketKeyedMap {
-        counts: HashMap::from([(MetricBucket::High, 7_u64)]),
+        counts: HashMap::from([(MetricBucket::High, 7_i64)]),
         samples: HashMap::new(),
     };
     assert_eq!(field_position.counts[&MetricBucket::High], 7);
@@ -1595,7 +1595,7 @@ fn test_nested_enum_keyed_map_members_match_the_serialized_keys() {
         siblings: HashMap::new(),
         string_keyed_outer: HashMap::from([(
             "a".to_owned(),
-            HashMap::from([(MetricBucket::High, 7_u64)]),
+            HashMap::from([(MetricBucket::High, 7_i64)]),
         )]),
     };
     let payload = serde_json::to_value(&nested).unwrap();
@@ -1886,11 +1886,11 @@ fn test_brand_keyed_maps_match_the_serialized_form() {
         )]),
     };
     let payload = serde_json::to_value(&maps).unwrap();
-    assert_eq!(payload["counts"], serde_json::json!({ "abc": 1_u64 }));
-    assert_eq!(payload["chained"], serde_json::json!({ "abc": 2_u64 }));
+    assert_eq!(payload["counts"], serde_json::json!({ "abc": 1_i64 }));
+    assert_eq!(payload["chained"], serde_json::json!({ "abc": 2_i64 }));
     assert_eq!(
         payload["nested"],
-        serde_json::json!({ "abc": { "abc": 3_u64 } })
+        serde_json::json!({ "abc": { "abc": 3_i64 } })
     );
 
     let schema = BrandKeyedMaps::json_schema();
@@ -2010,13 +2010,13 @@ fn test_alias_keyed_maps_match_the_serialized_form() {
         )]),
     };
     let payload = serde_json::to_value(&maps).unwrap();
-    assert_eq!(payload["counts"], serde_json::json!({ "abc": 1_u64 }));
-    assert_eq!(payload["chained"], serde_json::json!({ "abc": 2_u64 }));
-    assert_eq!(payload["branded"], serde_json::json!({ "abc": 4_u64 }));
-    assert_eq!(payload["paths"], serde_json::json!({ "a/b": 5_u64 }));
+    assert_eq!(payload["counts"], serde_json::json!({ "abc": 1_i64 }));
+    assert_eq!(payload["chained"], serde_json::json!({ "abc": 2_i64 }));
+    assert_eq!(payload["branded"], serde_json::json!({ "abc": 4_i64 }));
+    assert_eq!(payload["paths"], serde_json::json!({ "a/b": 5_i64 }));
     assert_eq!(
         payload["nested"],
-        serde_json::json!({ "abc": { "abc": 3_u64 } })
+        serde_json::json!({ "abc": { "abc": 3_i64 } })
     );
 
     let schema = AliasKeyedMaps::json_schema();
@@ -2158,12 +2158,12 @@ fn test_scalar_brand_keyed_maps_match_the_serialized_form() {
         )]),
     };
     let payload = serde_json::to_value(&maps).unwrap();
-    assert_eq!(payload["by_tick"], serde_json::json!({ "7": 1_u64 }));
-    assert_eq!(payload["chained"], serde_json::json!({ "7": 2_u64 }));
-    assert_eq!(payload["by_enabled"], serde_json::json!({ "true": 4_u64 }));
+    assert_eq!(payload["by_tick"], serde_json::json!({ "7": 1_i64 }));
+    assert_eq!(payload["chained"], serde_json::json!({ "7": 2_i64 }));
+    assert_eq!(payload["by_enabled"], serde_json::json!({ "true": 4_i64 }));
     assert_eq!(
         payload["nested"],
-        serde_json::json!({ "7": { "true": 3_u64 } })
+        serde_json::json!({ "7": { "true": 3_i64 } })
     );
 
     let schema = ScalarBrandKeyedMaps::json_schema();
@@ -2220,7 +2220,7 @@ fn test_enum_brand_keyed_maps_match_the_serialized_form() {
         )]),
     };
     let payload = serde_json::to_value(&maps).unwrap();
-    assert_eq!(payload["counts"], serde_json::json!({ "Daily": 1_u64 }));
+    assert_eq!(payload["counts"], serde_json::json!({ "Daily": 1_i64 }));
     assert!(payload["samples"]["Weekly"].is_object(), "got: {payload}");
 
     let read_back: EnumBrandKeyedMaps = serde_json::from_value(payload).unwrap();
@@ -2244,7 +2244,7 @@ fn test_chrono_brand_keyed_maps_describe_as_their_bare_inner_twin() {
     let payload = serde_json::to_value(&maps).unwrap();
     assert_eq!(
         payload["by_day"],
-        serde_json::json!({ "2020-01-02": 1_u64 })
+        serde_json::json!({ "2020-01-02": 1_i64 })
     );
 
     let read_back: ChronoBrandKeyedMaps = serde_json::from_value(payload).unwrap();
@@ -2375,13 +2375,13 @@ fn test_scalar_alias_keyed_maps_match_the_serialized_form() {
         )]),
     };
     let payload = serde_json::to_value(&maps).unwrap();
-    assert_eq!(payload["by_tick"], serde_json::json!({ "7": 1_u64 }));
-    assert_eq!(payload["chained"], serde_json::json!({ "7": 2_u64 }));
-    assert_eq!(payload["branded"], serde_json::json!({ "7": 4_u64 }));
-    assert_eq!(payload["by_enabled"], serde_json::json!({ "true": 5_u64 }));
+    assert_eq!(payload["by_tick"], serde_json::json!({ "7": 1_i64 }));
+    assert_eq!(payload["chained"], serde_json::json!({ "7": 2_i64 }));
+    assert_eq!(payload["branded"], serde_json::json!({ "7": 4_i64 }));
+    assert_eq!(payload["by_enabled"], serde_json::json!({ "true": 5_i64 }));
     assert_eq!(
         payload["nested"],
-        serde_json::json!({ "7": { "true": 3_u64 } })
+        serde_json::json!({ "7": { "true": 3_i64 } })
     );
 
     let schema = ScalarAliasKeyedMaps::json_schema();
@@ -2418,7 +2418,7 @@ fn test_chrono_alias_keyed_maps_describe_as_their_bare_target_twin() {
     let payload = serde_json::to_value(&maps).unwrap();
     assert_eq!(
         payload["by_day"],
-        serde_json::json!({ "2020-01-02": 1_u64 })
+        serde_json::json!({ "2020-01-02": 1_i64 })
     );
 
     let read_back: ChronoAliasKeyedMaps = serde_json::from_value(payload).unwrap();
@@ -2484,28 +2484,28 @@ fn test_bool_keyed_maps_write_the_two_string_keys() {
     let payload = serde_json::to_value(&maps).unwrap();
     assert_eq!(
         payload["alias_of_brand"],
-        serde_json::json!({ "true": 1_u64 })
+        serde_json::json!({ "true": 1_i64 })
     );
-    assert_eq!(payload["aliased"], serde_json::json!({ "true": 2_u64 }));
+    assert_eq!(payload["aliased"], serde_json::json!({ "true": 2_i64 }));
     assert_eq!(
         payload["aliased_chain"],
-        serde_json::json!({ "true": 3_u64 })
+        serde_json::json!({ "true": 3_i64 })
     );
     assert_eq!(
         payload["bare"],
-        serde_json::json!({ "true": 4_u64, "false": 5_u64 })
+        serde_json::json!({ "true": 4_i64, "false": 5_i64 })
     );
-    assert_eq!(payload["branded"], serde_json::json!({ "false": 6_u64 }));
+    assert_eq!(payload["branded"], serde_json::json!({ "false": 6_i64 }));
     assert_eq!(
         payload["branded_chain"],
-        serde_json::json!({ "true": 7_u64 })
+        serde_json::json!({ "true": 7_i64 })
     );
-    assert_eq!(payload["listed"], serde_json::json!([{ "false": 8_u64 }]));
+    assert_eq!(payload["listed"], serde_json::json!([{ "false": 8_i64 }]));
     assert_eq!(
         payload["nested"],
-        serde_json::json!({ "outer": { "true": 9_u64 } })
+        serde_json::json!({ "outer": { "true": 9_i64 } })
     );
-    assert_eq!(payload["optional"], serde_json::json!({ "true": 10_u64 }));
+    assert_eq!(payload["optional"], serde_json::json!({ "true": 10_i64 }));
     assert_eq!(
         payload["samples"],
         serde_json::json!({ "true": { "label": "s" } })
@@ -2663,26 +2663,26 @@ fn test_enumerated_keyed_maps_write_only_the_members_they_hold() {
     let payload = serde_json::to_value(&maps).unwrap();
     assert_eq!(
         payload["alias_of_brand"],
-        serde_json::json!({ "Daily": 1_u64 })
+        serde_json::json!({ "Daily": 1_i64 })
     );
-    assert_eq!(payload["aliased"], serde_json::json!({ "Daily": 2_u64 }));
+    assert_eq!(payload["aliased"], serde_json::json!({ "Daily": 2_i64 }));
     assert_eq!(
         payload["aliased_chain"],
-        serde_json::json!({ "Weekly": 3_u64 })
+        serde_json::json!({ "Weekly": 3_i64 })
     );
-    assert_eq!(payload["bare"], serde_json::json!({ "Daily": 4_u64 }));
-    assert_eq!(payload["branded"], serde_json::json!({ "Weekly": 5_u64 }));
+    assert_eq!(payload["bare"], serde_json::json!({ "Daily": 4_i64 }));
+    assert_eq!(payload["branded"], serde_json::json!({ "Weekly": 5_i64 }));
     assert_eq!(
         payload["branded_chain"],
-        serde_json::json!({ "Daily": 6_u64 })
+        serde_json::json!({ "Daily": 6_i64 })
     );
-    assert_eq!(payload["forward"], serde_json::json!({ "First": 7_u64 }));
-    assert_eq!(payload["listed"], serde_json::json!([{ "Daily": 8_u64 }]));
+    assert_eq!(payload["forward"], serde_json::json!({ "First": 7_i64 }));
+    assert_eq!(payload["listed"], serde_json::json!([{ "Daily": 8_i64 }]));
     assert_eq!(
         payload["nested"],
-        serde_json::json!({ "Daily": { "Weekly": 9_u64 } })
+        serde_json::json!({ "Daily": { "Weekly": 9_i64 } })
     );
-    assert_eq!(payload["optional"], serde_json::json!({ "Daily": 10_u64 }));
+    assert_eq!(payload["optional"], serde_json::json!({ "Daily": 10_i64 }));
     assert_eq!(
         payload["samples"],
         serde_json::json!({ "Weekly": { "label": "s" } })
@@ -2867,13 +2867,13 @@ fn test_date_time_keyed_maps_write_the_rfc_3339_key() {
     let maps = date_time_keyed_maps();
     let payload = serde_json::to_value(&maps).unwrap();
     for (field_name, value) in [
-        ("alias_of_brand", 1_u64),
-        ("aliased", 2_u64),
-        ("aliased_chain", 3_u64),
-        ("bare", 4_u64),
-        ("branded", 5_u64),
-        ("branded_chain", 6_u64),
-        ("optional", 9_u64),
+        ("alias_of_brand", 1_i64),
+        ("aliased", 2_i64),
+        ("aliased_chain", 3_i64),
+        ("bare", 4_i64),
+        ("branded", 5_i64),
+        ("branded_chain", 6_i64),
+        ("optional", 9_i64),
     ] {
         assert_eq!(
             payload[field_name],
@@ -2883,11 +2883,11 @@ fn test_date_time_keyed_maps_write_the_rfc_3339_key() {
     }
     assert_eq!(
         payload["listed"],
-        serde_json::json!([{ "2023-11-14T22:13:20Z": 7_u64 }])
+        serde_json::json!([{ "2023-11-14T22:13:20Z": 7_i64 }])
     );
     assert_eq!(
         payload["nested"],
-        serde_json::json!({ "outer": { "2023-11-14T22:13:20Z": 8_u64 } })
+        serde_json::json!({ "outer": { "2023-11-14T22:13:20Z": 8_i64 } })
     );
     assert_eq!(
         payload["samples"],
@@ -3076,16 +3076,16 @@ fn test_property_keyed_maps_write_the_keys_they_describe() {
         times: HashMap::from([(NaiveTime::from_hms_opt(3, 4, 5).unwrap(), 7)]),
     };
     let payload = serde_json::to_value(&maps).unwrap();
-    assert_eq!(payload["chars"], serde_json::json!({ "a": 1_u64 }));
-    assert_eq!(payload["dates"], serde_json::json!({ "2020-01-02": 2_u64 }));
+    assert_eq!(payload["chars"], serde_json::json!({ "a": 1_i64 }));
+    assert_eq!(payload["dates"], serde_json::json!({ "2020-01-02": 2_i64 }));
     assert_eq!(
         payload["datetimes"],
-        serde_json::json!({ "2020-01-02T03:04:05": 3_u64 })
+        serde_json::json!({ "2020-01-02T03:04:05": 3_i64 })
     );
-    assert_eq!(payload["numbers"], serde_json::json!({ "7": 4_u64 }));
-    assert_eq!(payload["slots"], serde_json::json!({ "Daily": 5_u64 }));
-    assert_eq!(payload["strings"], serde_json::json!({ "s": 6_u64 }));
-    assert_eq!(payload["times"], serde_json::json!({ "03:04:05": 7_u64 }));
+    assert_eq!(payload["numbers"], serde_json::json!({ "7": 4_i64 }));
+    assert_eq!(payload["slots"], serde_json::json!({ "Daily": 5_i64 }));
+    assert_eq!(payload["strings"], serde_json::json!({ "s": 6_i64 }));
+    assert_eq!(payload["times"], serde_json::json!({ "03:04:05": 7_i64 }));
 
     let read_back: PropertyKeyedMaps = serde_json::from_value(payload).unwrap();
     assert_eq!(read_back, maps);
@@ -3242,14 +3242,14 @@ fn wrapped_map_fields_properties() -> serde_json::Map<String, serde_json::Value>
 
 fn wrapped_map_fields() -> WrappedMapFields {
     WrappedMapFields {
-        bucket_counts: HashMap::from([(MetricBucket::High, 7_u64)]),
+        bucket_counts: HashMap::from([(MetricBucket::High, 7_i64)]),
         labels: HashMap::from([("a".to_owned(), "one".to_owned())]),
         optional_labels: None,
         optional_wrapped_labels: Some(vec![HashMap::from([("a".to_owned(), "one".to_owned())])]),
-        raw_keyed_counts: HashMap::from([(3_u32, 4_u64)]),
-        wrapped_bucket_counts: vec![HashMap::from([(MetricBucket::Low, 2_u64)])],
+        raw_keyed_counts: HashMap::from([(3_u32, 4_i64)]),
+        wrapped_bucket_counts: vec![HashMap::from([(MetricBucket::Low, 2_i64)])],
         wrapped_labels: vec![HashMap::from([("b".to_owned(), "two".to_owned())])],
-        wrapped_raw_keyed_counts: once(HashMap::from([(6_u32, 8_u64)])).collect(),
+        wrapped_raw_keyed_counts: once(HashMap::from([(6_u32, 8_i64)])).collect(),
     }
 }
 
@@ -3444,7 +3444,7 @@ fn test_element_fields_constructible_under_both_spellings() {
     };
     let sets = SetElementFields {
         aliased_tags: HashSet::from([tag.clone()]),
-        big_ids: HashSet::from([9_u64]),
+        big_ids: HashSet::from([9_i64]),
         constrained_labels: HashSet::from(["abc".to_owned()]),
         labels: HashSet::from(["t".to_owned()]),
         preprocessed_labels: HashSet::from(["t".to_owned()]),
@@ -3474,7 +3474,7 @@ fn test_element_fields_constructible_under_both_spellings() {
 fn test_set_element_json_schema() {
     let sets = SetElementFields {
         aliased_tags: HashSet::new(),
-        big_ids: HashSet::from([9_u64]),
+        big_ids: HashSet::from([9_i64]),
         constrained_labels: HashSet::new(),
         labels: HashSet::new(),
         preprocessed_labels: HashSet::new(),

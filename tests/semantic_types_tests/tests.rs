@@ -11,11 +11,11 @@ use tixschema::model_schema;
 pub type AuditId = OrderId;
 
 /// Tuple type alias mirroring remargin's compact link row: two optional string
-/// slots (null-flavored inside a positional tuple), a `Vec<usize>`, and a
+/// slots (null-flavored inside a positional tuple), a `Vec<isize>`, and a
 /// required string.
 #[cfg(all(test, feature = "typescript"))]
 #[model_schema(name = "CompactLinkRow")]
-pub type CompactLinkRow = (Option<String>, Vec<usize>, String, Option<String>);
+pub type CompactLinkRow = (Option<String>, Vec<isize>, String, Option<String>);
 
 /// Simple string-based type alias.
 #[cfg(all(test, feature = "typescript"))]

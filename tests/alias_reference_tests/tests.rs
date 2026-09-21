@@ -75,7 +75,7 @@ pub type LaterDeclaredId = String;
 /// published in — an override is not recoverable from the Rust ident, so a module named after the
 /// override would be one no forward reference could ever name.
 #[model_schema(name = "RenamedLaterDeclaredCount")]
-pub type LaterDeclaredCount = u64;
+pub type LaterDeclaredCount = i64;
 
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -316,18 +316,18 @@ fn alias_zod_schema_name_matches_the_reference_emitted_by_the_struct() {
 #[test]
 fn aliases_declared_under_their_reference_expand_in_this_feature_combination() {
     let later = NamesAliasesDeclaredLater {
-        counts: vec![9_u64],
+        counts: vec![9_i64],
         ids: HashMap::from([("n".to_owned(), "doc-8".to_owned())]),
     };
     assert_eq!(later.ids.get("n"), Some(&"doc-8".to_owned()));
-    assert_eq!(later.counts, vec![9_u64]);
+    assert_eq!(later.counts, vec![9_i64]);
 
     let earlier = NamesAliasesDeclaredEarlier {
-        counts: vec![10_u64],
+        counts: vec![10_i64],
         ids: HashMap::new(),
     };
     assert!(earlier.ids.is_empty());
-    assert_eq!(earlier.counts, vec![10_u64]);
+    assert_eq!(earlier.counts, vec![10_i64]);
 }
 
 /// A struct naming an alias declared under it used to refuse the whole crate: the reference

@@ -10,6 +10,7 @@ struct Address {
     street: String,
 }
 
+#[cfg(not(feature = "kotlin"))]
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct AllNumericTypes {
@@ -303,6 +304,7 @@ fn test_plain_enum_generates_string_enum() {
     assert!(enum_values.contains(&Value::String("Pending".to_owned())));
 }
 
+#[cfg(not(feature = "kotlin"))]
 #[test]
 fn test_integer_types_use_integer_schema() {
     let schema = AllNumericTypes::json_schema();
@@ -321,6 +323,7 @@ fn test_integer_types_use_integer_schema() {
     assert_eq!(properties["isize"]["type"], "integer");
 }
 
+#[cfg(not(feature = "kotlin"))]
 #[test]
 fn test_float_types_use_number_schema() {
     let schema = AllNumericTypes::json_schema();

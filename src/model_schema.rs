@@ -122,6 +122,9 @@ use crate::utils::json_argument_binding;
 #[cfg(feature = "dart")]
 use crate::features::dart::dart_schema_dispatch;
 
+#[cfg(feature = "kotlin")]
+use crate::features::kotlin::{kotlin_refused_width, kotlin_schema_dispatch};
+
 #[cfg(any(
     feature = "typescript",
     feature = "zod",
@@ -1195,6 +1198,10 @@ pub fn exec_model_schema(args: TokenStream, input: TokenStream) -> TokenStream {
     // or `z.lazy`-style deferral of its own to wire in).
     #[cfg(feature = "dart")]
     let dart_tokens = dart_schema_dispatch(&item, parsed_args.name_override.as_deref());
+    // Same independence as the Dart dispatch above: its own borrow of `item`, ahead of the move
+    // into the struct/enum/alias dispatch below.
+    #[cfg(feature = "kotlin")]
+    let kotlin_tokens = kotlin_schema_dispatch(&item, parsed_args.name_override.as_deref());
     let expanded = if let Item::Struct(item_struct) = item {
         process_struct(item_struct, &parsed_args)
     } else if let Item::Enum(item_enum) = item {
@@ -1210,11 +1217,19 @@ pub fn exec_model_schema(args: TokenStream, input: TokenStream) -> TokenStream {
     };
     let deferred = with_prefixed_tokens(expanded, &deferred_shape_refusals(registering.as_ref()));
     let bound = with_prefixed_tokens(deferred, &filling_bound_checks);
-    #[cfg(feature = "dart")]
+    #[cfg(all(feature = "dart", feature = "kotlin"))]
+    {
+        quote! { #bound #dart_tokens #kotlin_tokens }
+    }
+    #[cfg(all(feature = "dart", not(feature = "kotlin")))]
     {
         quote! { #bound #dart_tokens }
     }
-    #[cfg(not(feature = "dart"))]
+    #[cfg(all(not(feature = "dart"), feature = "kotlin"))]
+    {
+        quote! { #bound #kotlin_tokens }
+    }
+    #[cfg(not(any(feature = "dart", feature = "kotlin")))]
     {
         bound
     }
@@ -11366,11 +11381,19 @@ fn collect_field_guard_errors(
     #[cfg(not(any(feature = "typescript", feature = "zod", feature = "jsonschema")))]
     let map_key_error: Option<proc_macro2::TokenStream> = None;
 
+    #[cfg(feature = "kotlin")]
+    let kotlin_width_error = check_kotlin_width_field(field, field_def, &label)
+        .err()
+        .map(|err| err.to_compile_error());
+    #[cfg(not(feature = "kotlin"))]
+    let kotlin_width_error: Option<proc_macro2::TokenStream> = None;
+
     check_undescribable_std_field(field, field_def, &label)
         .err()
         .map(|err| err.to_compile_error())
         .into_iter()
         .chain(map_key_error)
+        .chain(kotlin_width_error)
         .chain(model_schema_prop_guard_errors(
             field,
             field_def,
@@ -11380,6 +11403,26 @@ fn collect_field_guard_errors(
         ))
         .chain(serde_guard_errors)
         .collect()
+}
+
+/// Rejects a field that reaches `u64` or `usize` at any depth, under the `kotlin` feature: Kotlin's
+/// widest unsigned width is `UInt`, and a pointer-sized width has no Kotlin counterpart at all.
+#[cfg(feature = "kotlin")]
+fn check_kotlin_width_field(
+    field: &Field,
+    field_def: &FieldDef,
+    label: &str,
+) -> Result<(), syn::Error> {
+    let Some(width) = kotlin_refused_width(field_def) else {
+        return Ok(());
+    };
+    Err(syn::Error::new_spanned(
+        field,
+        prefixed_guard_message(&format!(
+            "{label}: `{width}` has no Kotlin mapping; the Kotlin target refuses unsigned 64-bit \
+             and pointer-sized integers"
+        )),
+    ))
 }
 
 /// Every guard the field's `model_schema_prop` attribute earns: what the parser refused, then an

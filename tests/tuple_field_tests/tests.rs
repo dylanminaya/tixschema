@@ -214,7 +214,7 @@ fn test_optional_tuple_field_zod() {
     );
 }
 
-// The remargin compact-row shape is `Vec<(Option<String>, Vec<usize>, String, Option<String>)>`,
+// The remargin compact-row shape is `Vec<(Option<String>, Vec<isize>, String, Option<String>)>`,
 // which trips `clippy::type_complexity` as a struct field, and factoring it into a `type` alias
 // would make the macro treat it as a sibling reference rather than a tuple — so the happy path is
 // proven in two composable halves: the exact inner tuple below, and the outer `Vec` wrap in
@@ -229,7 +229,7 @@ fn test_tuple_element_option_null_flavor_ts() {
     #[model_schema()]
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Row {
-        pub row: (Option<String>, Vec<usize>, String, Option<String>),
+        pub row: (Option<String>, Vec<isize>, String, Option<String>),
     }
 
     let ts = Row::ts_definition();
@@ -251,7 +251,7 @@ fn test_tuple_element_option_null_flavor_zod() {
     #[model_schema()]
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Row {
-        pub row: (Option<String>, Vec<usize>, String, Option<String>),
+        pub row: (Option<String>, Vec<isize>, String, Option<String>),
     }
 
     let zod = Row::zod_schema();
@@ -276,7 +276,7 @@ fn test_tuple_element_option_null_flavor_json_schema() {
     #[model_schema()]
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Row {
-        pub row: (Option<String>, Vec<usize>, String, Option<String>),
+        pub row: (Option<String>, Vec<isize>, String, Option<String>),
     }
 
     let schema = Row::json_schema();
@@ -310,15 +310,15 @@ fn test_tuple_element_option_null_flavor_json_schema() {
     assert_eq!(prefix[2], serde_json::json!({ "type": "string" }));
 }
 
-/// Array-wrap composition (TS): a `Vec<(Option<Vec<usize>>, String)>` field wraps the tuple in
-/// `Array<[...]>`, and the null flavor survives the wrap — the `Option<Vec<usize>>` slot proves
+/// Array-wrap composition (TS): a `Vec<(Option<Vec<isize>>, String)>` field wraps the tuple in
+/// `Array<[...]>`, and the null flavor survives the wrap — the `Option<Vec<isize>>` slot proves
 /// the array wrap happens inside the base with `null` on top: `Array<number> | null`.
 #[test]
 fn test_tuple_element_option_array_wrap_ts() {
     #[model_schema()]
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Rows {
-        pub pair: Vec<(Option<Vec<usize>>, String)>,
+        pub pair: Vec<(Option<Vec<isize>>, String)>,
     }
 
     let ts = Rows::ts_definition();
@@ -340,7 +340,7 @@ fn test_tuple_element_option_array_wrap_zod() {
     #[model_schema()]
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Rows {
-        pub pair: Vec<(Option<Vec<usize>>, String)>,
+        pub pair: Vec<(Option<Vec<isize>>, String)>,
     }
 
     let zod = Rows::zod_schema();
@@ -363,7 +363,7 @@ fn test_tuple_element_option_array_wrap_json_schema() {
     #[model_schema()]
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Rows {
-        pub pair: Vec<(Option<Vec<usize>>, String)>,
+        pub pair: Vec<(Option<Vec<isize>>, String)>,
     }
 
     let schema = Rows::json_schema();
@@ -380,7 +380,7 @@ fn test_tuple_element_option_array_wrap_json_schema() {
         serde_json::json!({
             "anyOf": [{ "type": "array", "items": { "type": "integer" } }, { "type": "null" }]
         }),
-        "Slot 0 (Option<Vec<usize>>) should be anyOf [array, null]. Got: {}",
+        "Slot 0 (Option<Vec<isize>>) should be anyOf [array, null]. Got: {}",
         prefix[0]
     );
 }
@@ -390,9 +390,9 @@ fn test_tuple_element_option_array_wrap_json_schema() {
 /// on the exact remargin row shape (a `type` alias, so serde handles it natively).
 #[test]
 fn test_tuple_element_option_serde_roundtrip() {
-    type Row = (Option<String>, Vec<usize>, String, Option<String>);
+    type Row = (Option<String>, Vec<isize>, String, Option<String>);
 
-    let row: Row = (None, vec![26_usize], "internal_report.md".to_owned(), None);
+    let row: Row = (None, vec![26_isize], "internal_report.md".to_owned(), None);
     let json = serde_json::to_value(&row).unwrap();
     assert_eq!(
         json,

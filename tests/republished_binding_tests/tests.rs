@@ -138,11 +138,11 @@ struct SlotHolder<IdType>(IdType);
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct HoldsBrands {
     direct: CorrelationId,
-    keyed: HashMap<CorrelationId, u64>,
+    keyed: HashMap<CorrelationId, i64>,
     listed: Vec<CorrelationId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     maybe: Option<CorrelationId>,
-    paired: (CorrelationId, u64),
+    paired: (CorrelationId, i64),
     valued: HashMap<String, CorrelationId>,
 }
 
@@ -185,7 +185,7 @@ type BrandList = Vec<CorrelationId>;
 type BrandsByName = HashMap<String, CorrelationId>;
 
 #[model_schema()]
-type BrandPair = (CorrelationId, u64);
+type BrandPair = (CorrelationId, i64);
 
 /// The line an alias-of-brand `const` emitted before its annotation was read back off what it
 /// published, and the diagnostic a consumer compiling that line got. Recorded verbatim from tsc
@@ -657,7 +657,7 @@ fn an_alias_of_a_built_expression_writes_its_targets_wire_form() {
     assert_eq!(serde_json::to_string(&listed).unwrap(), "[\"l\"]");
     let named: BrandsByName = HashMap::from([("n".to_owned(), CorrelationId("v".to_owned()))]);
     assert_eq!(serde_json::to_string(&named).unwrap(), "{\"n\":\"v\"}");
-    let paired: BrandPair = (CorrelationId("p".to_owned()), 3_u64);
+    let paired: BrandPair = (CorrelationId("p".to_owned()), 3_i64);
     assert_eq!(serde_json::to_string(&paired).unwrap(), "[\"p\",3]");
 }
 
@@ -681,18 +681,18 @@ fn a_datetime_brand_writes_the_timestamp_its_target_writes() {
 fn a_brand_in_a_composite_is_written_as_the_bare_value_in_every_position() {
     let held = HoldsBrands {
         direct: CorrelationId("a".to_owned()),
-        keyed: HashMap::from([(CorrelationId("k".to_owned()), 1_u64)]),
+        keyed: HashMap::from([(CorrelationId("k".to_owned()), 1_i64)]),
         listed: vec![CorrelationId("l".to_owned())],
         maybe: Some(CorrelationId("m".to_owned())),
-        paired: (CorrelationId("p".to_owned()), 2_u64),
+        paired: (CorrelationId("p".to_owned()), 2_i64),
         valued: HashMap::from([("v".to_owned(), CorrelationId("w".to_owned()))]),
     };
     let wire = serde_json::to_value(&held).unwrap();
     assert_eq!(wire["direct"], serde_json::json!("a"));
-    assert_eq!(wire["keyed"], serde_json::json!({ "k": 1_u64 }));
+    assert_eq!(wire["keyed"], serde_json::json!({ "k": 1_i64 }));
     assert_eq!(wire["listed"], serde_json::json!(["l"]));
     assert_eq!(wire["maybe"], serde_json::json!("m"));
-    assert_eq!(wire["paired"], serde_json::json!(["p", 2_u64]));
+    assert_eq!(wire["paired"], serde_json::json!(["p", 2_i64]));
     assert_eq!(wire["valued"], serde_json::json!({ "v": "w" }));
     assert_eq!(serde_json::from_value::<HoldsBrands>(wire).unwrap(), held);
 

@@ -9,6 +9,7 @@ struct Address {
     street: String,
 }
 
+#[cfg(not(feature = "kotlin"))]
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct AllNumericTypes {
@@ -288,6 +289,7 @@ fn test_discriminated_union_uses_z_discriminated_union() {
     );
 }
 
+#[cfg(not(feature = "kotlin"))]
 #[test]
 fn test_integer_types_use_int_modifier() {
     let zod = AllNumericTypes::zod_schema();
@@ -310,6 +312,7 @@ fn test_integer_types_use_int_modifier() {
     );
 }
 
+#[cfg(not(feature = "kotlin"))]
 #[test]
 fn test_float_types_do_not_use_int_modifier() {
     let zod = AllNumericTypes::zod_schema();

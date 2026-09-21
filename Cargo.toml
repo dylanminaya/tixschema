@@ -73,6 +73,7 @@ typescript = [] # TypeScript type generation and TypeScript-style Zod schemas
 chrono = [
 ] # Chrono date/time type support (NaiveDate, NaiveTime, NaiveDateTime, DateTime)
 dart = [] # Dart type generation and a JSON fromJson/toJson codec, beside the TypeScript output
+kotlin = [] # Kotlin type generation with kotlinx.serialization annotations
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
