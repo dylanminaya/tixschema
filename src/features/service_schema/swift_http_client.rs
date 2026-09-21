@@ -408,12 +408,16 @@ fn path_build_stmt(fn_prefix: &str, operation: &OperationDef, shape: &HttpShape)
 /// field with nowhere else to go is refused at parse time — so every push is guarded by an
 /// `if let`, matching the Dart client's own null check.
 fn named_query_build_stmt(shape: &HttpShape) -> String {
-    // The object walked below is keyed the way `JSONEncoder` wrote it — Swift's own camelCase
-    // property spelling, `CodingKeys` aside — never the raw identifier the path template names.
+    // The object walked below is keyed the way `JSONEncoder` wrote it — the message's own
+    // `CodingKeys` wire spelling, which this macro cannot see past its default (the raw field
+    // name, untransformed) since an author's own message carries no rename this crate can read.
+    // That default is exactly the path template's own placeholder spelling, so the exclusion
+    // reads it raw — never through Swift's own camelCase property spelling, which is a different
+    // name for the same field and mirrors the Dart client's own untransformed exclusion.
     let bound = shape
         .placeholder_names()
         .iter()
-        .map(|name| format!("\"{}\"", RenameRule::CamelCase.apply_to_field(name)))
+        .map(|name| format!("\"{name}\""))
         .collect::<Vec<String>>()
         .join(", ");
     format!(

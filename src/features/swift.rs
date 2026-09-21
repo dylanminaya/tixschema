@@ -361,7 +361,7 @@ fn swift_map_key_scalar(key: &FieldDef) -> String {
 fn swift_map_key_codec(key: &FieldDef) -> (String, String) {
     match &key.field_type {
         FieldDefType::Boolean => (
-            "(wireKey == \"true\")".to_owned(),
+            "(wireKey == \"true\" ? true : wireKey == \"false\" ? false : nil)".to_owned(),
             "(key ? \"true\" : \"false\")".to_owned(),
         ),
         FieldDefType::SiblingType(name, _) => {

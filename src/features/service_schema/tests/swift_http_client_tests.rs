@@ -142,15 +142,34 @@ fn a_named_message_s_unbound_fields_build_the_query_string_of_a_bodyless_method(
     let method = method_body(&written, "window");
     assert!(
         method.contains("JSONSerialization.jsonObject(")
-            && method.contains("[\"conversationId\"].contains(key)")
+            && method.contains("[\"conversation_id\"].contains(key)")
             && method.contains("query.append((key,"),
         "a field the path does not bind is a query parameter, read back off the encoded message \
-         since this macro cannot name an author's own fields. Got: {method}"
+         since this macro cannot name an author's own fields; the exclusion reads the wire \
+         spelling the placeholder names, not Swift's camelCase property spelling. \
+         Got: {method}"
     );
     assert!(
         !method.contains("let query: [(String, String)] = []"),
         "a message carrying more than the path spends does not send an empty query. \
          Got: {method}"
+    );
+}
+
+#[test]
+fn a_named_message_s_query_exclusion_names_the_snake_case_wire_key_not_the_camel_case_property() {
+    let written = swift_http_client_of(SWIFT_SINGLE_PLACEHOLDER_HTTP_SERVICE);
+    let method = method_body(&written, "window");
+    assert!(
+        method.contains("[\"conversation_id\"].contains(key)"),
+        "the path-bound field is excluded by the key `JSONEncoder` actually writes by default — \
+         the raw, untransformed field name — never `conversationId`, which names no key the \
+         default `CodingKeys` produces and would let the path-bound field leak into the query. \
+         Got: {method}"
+    );
+    assert!(
+        !method.contains("[\"conversationId\"].contains(key)"),
+        "got: {method}"
     );
 }
 
