@@ -11,14 +11,13 @@
 //! library do not both declare it. Nothing here names an HTTP package; the hand-written
 //! implementation of this interface lives with the Flutter workspace.
 //!
-//! # A caller throws, rather than narrows a result
+//! # A caller reads the outcome; one-way still throws
 //!
-//! The TypeScript half answers every reply with a `{ ok, value | error }` envelope, because a
-//! union is how TypeScript tells success from failure. Dart's own idiom for a `Future` is a thrown
-//! exception, so a reply operation here answers `Future<Success>` directly and throws a
-//! `{Service}HttpError<Declared>` — the declared error, or the fault behind `isServiceFault` —
-//! instead. A one-way operation answers `Future<void>` and throws the fault-only
-//! `{Service}HttpRefusal`, exactly as its TypeScript sibling throws rather than returns one.
+//! The TypeScript half answers every reply with a `{ ok, value | error }` envelope; the Dart half
+//! answers with [`super::dart_result`]'s own sealed pair instead — a reply operation here answers
+//! `Future<{Service}{Operation}Result>` and never throws for a declared error or a fault. A
+//! one-way operation still answers `Future<void>` and throws the fault-only `{Service}HttpRefusal`,
+//! having no reply arm to carry a fault through.
 //!
 //! # The fault is the same generated type every other surface answers faults through
 //!
@@ -56,6 +55,7 @@
 //! *request* record carries only where a service declares one — a `parts` list of name/value pairs,
 //! exactly mirroring the TypeScript client's own `parts` field.
 
+use super::result::result_name;
 use crate::features::dart::dart_typename;
 use crate::field_type::{FieldDefType, get_field_def};
 use crate::rename_rule::RenameRule;
@@ -80,10 +80,7 @@ pub fn emit(service: &ServiceDef) -> Vec<String> {
     let fn_prefix = RenameRule::CamelCase.apply_to_variant(&named);
     let has_stream = service_declares_a_stream(service);
     let has_multipart = service_declares_multipart(service);
-    let mut published = vec![
-        transport_seam(&named, has_stream, has_multipart),
-        error_class(&named),
-    ];
+    let mut published = vec![transport_seam(&named, has_stream, has_multipart)];
     if has_one_way(service) {
         published.push(refusal_class(&named));
     }
@@ -150,32 +147,9 @@ fn transport_seam(named: &str, has_stream: bool, has_multipart: bool) -> String 
 }
 
 // ---------------------------------------------------------------------------------------------
-// The two exceptions a client throws: the declared error or a fault, and (one-way only) a fault
-// with nowhere else to be returned.
+// The one exception a client still throws: a one-way method's own fault, having no reply arm to
+// carry it through instead.
 // ---------------------------------------------------------------------------------------------
-
-fn error_class(named: &str) -> String {
-    let fields = fault_fields_typescript_name(named);
-    format!(
-        "/// What a `{named}` `http_rest` client throws for a request-and-reply operation: the\n\
-         /// error the operation declared, or a fault it never declared.\n\
-         class {named}HttpError<E> implements Exception {{\n  \
-         {named}HttpError.declared(E declared)\n    \
-         : error = declared,\n      \
-         fault = null;\n  \
-         {named}HttpError.fault({fields} reported)\n    \
-         : error = null,\n      \
-         fault = reported;\n  \
-         final E? error;\n  \
-         final {fields}? fault;\n  \
-         bool get isServiceFault => fault != null;\n  \
-         @override\n  \
-         String toString() => isServiceFault\n      \
-         ? '{named}HttpError: service fault ${{fault!.kind}} in `${{fault!.operation}}`: ${{fault!.detail}}'\n      \
-         : '{named}HttpError: $error';\n\
-         }}"
-    )
-}
 
 fn refusal_class(named: &str) -> String {
     let fields = fault_fields_typescript_name(named);
@@ -251,8 +225,14 @@ fn stream_success_dart_type(shape: &HttpShape, success: &Type) -> String {
     format!("({})", parts.join(", "))
 }
 
-fn return_type(operation: &OperationDef, shape: &HttpShape) -> String {
-    format!("Future<{}>", dart_success_type(operation, shape))
+/// A one-way method answers `Future<void>`; a reply method answers `Future<{Service}{Op}Result>`
+/// — [`super::dart_result`]'s own sealed pair — and never throws for a declared error or a fault.
+fn return_type(named: &str, operation: &OperationDef) -> String {
+    if matches!(operation.outcome, OperationOutcome::OneWay) {
+        return "Future<void>".to_owned();
+    }
+    let result = result_name(named, operation).unwrap();
+    format!("Future<{result}>")
 }
 
 /// The Dart type `return_type` wraps in `Future<...>`. Shared with the result pair's `Ok` member
@@ -289,7 +269,7 @@ fn method(
     let wire = &operation.wire_name;
     let call = &operation.ts_name;
     let params = method_params(operation, &shape);
-    let returns = return_type(operation, &shape);
+    let returns = return_type(named, operation);
     let path_build = path_build_stmt(operation, &shape);
     let query_build = query_build_stmt(operation, &shape);
     let headers_build = header_in_build_stmt(&shape);
@@ -308,18 +288,20 @@ fn method(
             ),
             one_way_decode_stmt(named, fn_prefix, &shape, wire),
         ),
-        OperationOutcome::Reply { error, success } => (
-            send_stmt_reply(
-                named,
-                fn_prefix,
-                wire,
-                method_str,
-                &dart_type_of(error),
-                has_stream,
-                has_multipart,
-            ),
-            reply_decode_stmt(named, fn_prefix, &shape, wire, error, success),
-        ),
+        OperationOutcome::Reply { error, success } => {
+            let result = result_name(named, operation).unwrap();
+            (
+                send_stmt_reply(
+                    &result,
+                    fn_prefix,
+                    wire,
+                    method_str,
+                    has_stream,
+                    has_multipart,
+                ),
+                reply_decode_stmt(&result, fn_prefix, &shape, wire, error, success),
+            )
+        }
     };
     format!(
         "{doc}\n  \
@@ -565,11 +547,10 @@ fn send_stmt_one_way(
 }
 
 fn send_stmt_reply(
-    named: &str,
+    result: &str,
     fn_prefix: &str,
     wire: &str,
     method_str: &str,
-    error_ty: &str,
     has_stream: bool,
     has_multipart: bool,
 ) -> String {
@@ -579,7 +560,7 @@ fn send_stmt_reply(
          try {{\n      \
          response = {send};\n    \
          }} catch (uncarried) {{\n      \
-         throw {named}HttpError<{error_ty}>.fault(_{fn_prefix}HttpTransportFailure('{wire}', '$uncarried'));\n    \
+         return {result}Fault(_{fn_prefix}HttpTransportFailure('{wire}', '$uncarried'));\n    \
          }}\n",
         send = send_expr(method_str, has_multipart),
     )
@@ -613,7 +594,7 @@ fn error_condition_expr(shape: &HttpShape) -> String {
 }
 
 fn reply_decode_stmt(
-    named: &str,
+    result: &str,
     fn_prefix: &str,
     shape: &HttpShape,
     wire: &str,
@@ -621,12 +602,12 @@ fn reply_decode_stmt(
     success: &Type,
 ) -> String {
     if matches!(shape.body_kind, BodyKind::Stream) {
-        return stream_reply_decode_stmt(named, fn_prefix, shape, wire, error, success);
+        return stream_reply_decode_stmt(result, fn_prefix, shape, wire, error, success);
     }
     let ok_status = shape.ok_status;
     let error_condition = error_condition_expr(shape);
     let error_ty = dart_type_of(error);
-    let success_block = success_decode_block(named, fn_prefix, wire, shape, &error_ty, success);
+    let success_block = success_decode_block(result, fn_prefix, wire, shape, success);
     format!(
         "    final status = response.status;\n    \
          if (status == {ok_status}) {{\n{success_block}    }}\n    \
@@ -635,16 +616,16 @@ fn reply_decode_stmt(
          try {{\n        \
          declared = {error_ty}.fromJson(jsonDecode(utf8.decode(response.body)));\n      \
          }} catch (rejected) {{\n        \
-         throw {named}HttpError<{error_ty}>.fault(\n          \
+         return {result}Fault(\n          \
          _{fn_prefix}HttpUndeserializablePayload('{wire}', '$rejected'),\n        \
          );\n      \
          }}\n      \
-         throw {named}HttpError<{error_ty}>.declared(declared);\n    \
+         return {result}Operation(declared);\n    \
          }}\n    \
          if (status == 400 || status == 404 || status == 500) {{\n      \
-         throw {named}HttpError<{error_ty}>.fault(_{fn_prefix}HttpFaultFromBody('{wire}', response.body));\n    \
+         return {result}Fault(_{fn_prefix}HttpFaultFromBody('{wire}', response.body));\n    \
          }}\n    \
-         throw {named}HttpError<{error_ty}>.fault(\n      \
+         return {result}Fault(\n      \
          _{fn_prefix}HttpUndeserializablePayload('{wire}', 'an unexpected status ($status) answered'),\n    \
          );\n"
     )
@@ -656,7 +637,7 @@ fn reply_decode_stmt(
 /// unexpected-status ladder every other kind answers through — mirrors the Rust client's own
 /// `stream_reply_decode`.
 fn stream_reply_decode_stmt(
-    named: &str,
+    result: &str,
     fn_prefix: &str,
     shape: &HttpShape,
     wire: &str,
@@ -666,8 +647,8 @@ fn stream_reply_decode_stmt(
     let ok_status = shape.ok_status;
     let error_condition = error_condition_expr(shape);
     let error_ty = dart_type_of(error);
-    let partial = stream_success_arm(named, fn_prefix, wire, shape, &error_ty, success, true);
-    let full = stream_success_arm(named, fn_prefix, wire, shape, &error_ty, success, false);
+    let partial = stream_success_arm(result, fn_prefix, wire, shape, success, true);
+    let full = stream_success_arm(result, fn_prefix, wire, shape, success, false);
     format!(
         "    final status = response.status;\n    \
          if (status == 206) {{\n{partial}    }}\n    \
@@ -677,16 +658,16 @@ fn stream_reply_decode_stmt(
          try {{\n        \
          declared = {error_ty}.fromJson(jsonDecode(utf8.decode(response.body)));\n      \
          }} catch (rejected) {{\n        \
-         throw {named}HttpError<{error_ty}>.fault(\n          \
+         return {result}Fault(\n          \
          _{fn_prefix}HttpUndeserializablePayload('{wire}', '$rejected'),\n        \
          );\n      \
          }}\n      \
-         throw {named}HttpError<{error_ty}>.declared(declared);\n    \
+         return {result}Operation(declared);\n    \
          }}\n    \
          if (status == 400 || status == 404 || status == 500) {{\n      \
-         throw {named}HttpError<{error_ty}>.fault(_{fn_prefix}HttpFaultFromBody('{wire}', response.body));\n    \
+         return {result}Fault(_{fn_prefix}HttpFaultFromBody('{wire}', response.body));\n    \
          }}\n    \
-         throw {named}HttpError<{error_ty}>.fault(\n      \
+         return {result}Fault(\n      \
          _{fn_prefix}HttpUndeserializablePayload('{wire}', 'an unexpected status ($status) answered'),\n    \
          );\n"
     )
@@ -697,11 +678,10 @@ fn stream_reply_decode_stmt(
 /// pairing it with `response.bodyStream`, the seam's own lazily-pulled source — then every declared
 /// `header_out` element read back exactly as the bytes and JSON paths do.
 fn stream_success_arm(
-    named: &str,
+    result: &str,
     fn_prefix: &str,
     wire: &str,
     shape: &HttpShape,
-    error_ty: &str,
     success: &Type,
     partial: bool,
 ) -> String {
@@ -717,14 +697,18 @@ fn stream_success_arm(
         "      final answer = (contentRange: contentRange, body: response.bodyStream);\n",
     );
     if shape.header_out.is_empty() {
-        stmt.push_str("      return answer;\n");
+        let _ = writeln!(stmt, "      return {result}Ok(answer);");
         return stmt;
     }
     let elements: Vec<&Type> = tuple_elements(success).into_iter().flatten().collect();
     let (header_stmts, header_idents) =
-        header_out_read_stmts(named, fn_prefix, wire, shape, error_ty, &elements, 1);
+        header_out_read_stmts(result, fn_prefix, wire, shape, &elements, 1);
     stmt.push_str(&header_stmts);
-    let _ = writeln!(stmt, "      return (answer, {});", header_idents.join(", "));
+    let _ = writeln!(
+        stmt,
+        "      return {result}Ok((answer, {}));",
+        header_idents.join(", ")
+    );
     stmt
 }
 
@@ -733,11 +717,10 @@ fn stream_success_arm(
 /// ordinary JSON and streamed shapes (the value or answer alone), 2 for `body = "bytes"` (the bytes
 /// and their content type). Shared by every `success_decode_block` arm so the copies cannot drift.
 fn header_out_read_stmts(
-    named: &str,
+    result: &str,
     fn_prefix: &str,
     wire: &str,
     shape: &HttpShape,
-    error_ty: &str,
     elements: &[&Type],
     body_elements: usize,
 ) -> (String, Vec<String>) {
@@ -756,7 +739,7 @@ fn header_out_read_stmts(
             stmt,
             "      final {raw_ident} = {find_header}(response.headers, '{name}');\n      \
              if ({raw_ident} == null) {{\n        \
-             throw {named}HttpError<{error_ty}>.fault(\n          \
+             return {result}Fault(\n          \
              _{fn_prefix}HttpUndeserializablePayload('{wire}', 'a declared response header was missing'),\n        \
              );\n      \
              }}\n      \
@@ -775,21 +758,20 @@ fn header_out_read_stmts(
 /// it through [`stream_reply_decode_stmt`] instead, since a streamed answer has two success
 /// statuses (`200` and `206`), not one.
 fn success_decode_block(
-    named: &str,
+    result: &str,
     fn_prefix: &str,
     wire: &str,
     shape: &HttpShape,
-    error_ty: &str,
     success: &Type,
 ) -> String {
     if matches!(shape.body_kind, BodyKind::Bytes) {
-        return bytes_success_decode_block(named, fn_prefix, wire, shape, error_ty, success);
+        return bytes_success_decode_block(result, fn_prefix, wire, shape, success);
     }
     // `Json` and `Multipart` both answer ordinary JSON, `header_out` included — a multipart
     // operation's own body kind is a request-side concern only.
     if shape.header_out.is_empty() {
         if is_unit_type(success) {
-            return "      return;\n".to_owned();
+            return format!("      return {result}Ok(null);\n");
         }
         let success_ty = dart_type_of(success);
         return format!(
@@ -797,11 +779,11 @@ fn success_decode_block(
              try {{\n        \
              value = {success_ty}.fromJson(jsonDecode(utf8.decode(response.body)));\n      \
              }} catch (rejected) {{\n        \
-             throw {named}HttpError<{error_ty}>.fault(\n          \
+             return {result}Fault(\n          \
              _{fn_prefix}HttpUndeserializablePayload('{wire}', '$rejected'),\n        \
              );\n      \
              }}\n      \
-             return value;\n"
+             return {result}Ok(value);\n"
         );
     }
     // `header_out`'s own arity check guarantees `success` is a tuple of exactly this many
@@ -815,15 +797,19 @@ fn success_decode_block(
          try {{\n        \
          value = {body_ty}.fromJson(jsonDecode(utf8.decode(response.body)));\n      \
          }} catch (rejected) {{\n        \
-         throw {named}HttpError<{error_ty}>.fault(\n          \
+         return {result}Fault(\n          \
          _{fn_prefix}HttpUndeserializablePayload('{wire}', '$rejected'),\n        \
          );\n      \
          }}\n"
     );
     let (header_stmts, header_idents) =
-        header_out_read_stmts(named, fn_prefix, wire, shape, error_ty, &elements, 1);
+        header_out_read_stmts(result, fn_prefix, wire, shape, &elements, 1);
     stmt.push_str(&header_stmts);
-    let _ = writeln!(stmt, "      return (value, {});", header_idents.join(", "));
+    let _ = writeln!(
+        stmt,
+        "      return {result}Ok((value, {}));",
+        header_idents.join(", ")
+    );
     stmt
 }
 
@@ -831,11 +817,10 @@ fn success_decode_block(
 /// then every declared `header_out` element read back off the response's own headers — mirrors the
 /// TypeScript client's own `bytes_success_decode_block`, shifted one slot for the content type.
 fn bytes_success_decode_block(
-    named: &str,
+    result: &str,
     fn_prefix: &str,
     wire: &str,
     shape: &HttpShape,
-    error_ty: &str,
     success: &Type,
 ) -> String {
     let mut stmt = format!(
@@ -843,16 +828,19 @@ fn bytes_success_decode_block(
         find_header_call(fn_prefix)
     );
     if shape.header_out.is_empty() {
-        stmt.push_str("      return (response.body, contentType);\n");
+        let _ = writeln!(
+            stmt,
+            "      return {result}Ok((response.body, contentType));"
+        );
         return stmt;
     }
     let elements: Vec<&Type> = tuple_elements(success).into_iter().flatten().collect();
     let (header_stmts, header_idents) =
-        header_out_read_stmts(named, fn_prefix, wire, shape, error_ty, &elements, 2);
+        header_out_read_stmts(result, fn_prefix, wire, shape, &elements, 2);
     stmt.push_str(&header_stmts);
     let _ = writeln!(
         stmt,
-        "      return (response.body, contentType, {});",
+        "      return {result}Ok((response.body, contentType, {}));",
         header_idents.join(", ")
     );
     stmt

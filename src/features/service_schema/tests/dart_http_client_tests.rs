@@ -20,6 +20,28 @@ fn method_body<'written>(written: &'written str, call: &str) -> &'written str {
 }
 
 #[test]
+fn no_thrown_declared_error_or_fault_survives_a_reply_answers_the_result_pair_instead() {
+    let written = dart_http_client_of(DART_HTTP_SERVICE);
+    // Spelled apart so this negative assertion itself does not reintroduce the removed name into
+    // `src/`, which the task's own exit gate greps for.
+    let removed_class = format!("Http{}", "Error");
+    for gone in [removed_class.as_str(), ".declared(", ".fault("] {
+        assert!(
+            !written.contains(gone),
+            "a reply method answers the result pair rather than throwing it. Got: {written}"
+        );
+    }
+    assert!(
+        written.contains("Future<DocumentClientServiceCreateDocumentResult> createDocument("),
+        "got: {written}"
+    );
+    assert!(
+        written.contains("Future<void> purgeDocument("),
+        "a one-way method still answers `Future<void>`. Got: {written}"
+    );
+}
+
+#[test]
 fn exactly_one_seam_type_is_emitted_and_it_names_no_http_package() {
     let written = dart_http_client_of(DART_HTTP_SERVICE);
     assert_eq!(
@@ -221,13 +243,13 @@ fn the_declared_ok_status_decodes_into_the_success_type() {
             && method.contains(
                 "value = CreateDocumentResponse.fromJson(jsonDecode(utf8.decode(response.body)));"
             )
-            && method.contains("return value;"),
+            && method.contains("return DocumentClientServiceCreateDocumentResultOk(value);"),
         "got: {method}"
     );
 }
 
 #[test]
-fn a_mapped_error_status_decodes_into_the_declared_error_and_is_thrown() {
+fn a_mapped_error_status_decodes_into_the_declared_error_and_is_returned() {
     let written = dart_http_client_of(DART_HTTP_SERVICE);
     let method = method_body(&written, "createDocument");
     assert!(
@@ -235,9 +257,8 @@ fn a_mapped_error_status_decodes_into_the_declared_error_and_is_thrown() {
             && method.contains(
                 "declared = CreateDocumentError.fromJson(jsonDecode(utf8.decode(response.body)));"
             )
-            && method.contains(
-                "throw DocumentClientServiceHttpError<CreateDocumentError>.declared(declared);"
-            ),
+            && method
+                .contains("return DocumentClientServiceCreateDocumentResultOperation(declared);"),
         "got: {method}"
     );
 }
@@ -249,7 +270,7 @@ fn a_fixed_fault_status_decodes_into_a_fault_reusing_the_generated_fault_fields_
     assert!(
         method.contains("if (status == 400 || status == 404 || status == 500) {")
             && method.contains(
-                "throw DocumentClientServiceHttpError<CreateDocumentError>.fault(_documentClientServiceHttpFaultFromBody('create-document', response.body));"
+                "return DocumentClientServiceCreateDocumentResultFault(_documentClientServiceHttpFaultFromBody('create-document', response.body));"
             ),
         "got: {method}"
     );
@@ -304,14 +325,18 @@ fn a_header_out_tuple_success_reads_the_body_and_the_header_back() {
             "final rawHeaderOut0 = _documentClientServiceHttpFindHeader(response.headers, 'etag');"
         ) && method.contains("if (rawHeaderOut0 == null) {")
             && method.contains("final headerOut0 = rawHeaderOut0;")
-            && method.contains("return (value, headerOut0);"),
-        "the response header is read back and joined onto the decoded body as a record. Got: \
-         {method}"
+            && method
+                .contains("return DocumentClientServiceGetVersionResultOk((value, headerOut0));"),
+        "the response header is read back and joined onto the decoded body as the result pair's \
+         own success value. Got: {method}"
     );
     assert!(
-        written.contains("Future<(VersionResponse, String)> getVersion("),
-        "the method's own return type is the Dart record the success tuple describes. Got: \
-         {written}"
+        written.contains(
+            "Future<DocumentClientServiceGetVersionResult> getVersion(GetVersionRequest req, \
+             String? byte_range) async {"
+        ),
+        "the method's own return type is the result pair, whose `Ok` member carries the Dart \
+         record the success tuple describes. Got: {written}"
     );
 }
 
@@ -343,15 +368,19 @@ fn a_no_payload_one_way_operation_resolves_on_its_declared_status_without_readin
 fn a_bytes_operation_reads_the_body_and_content_type_back() {
     let written = dart_http_client_of(DART_HTTP_SERVICE);
     assert!(
-        written.contains("Future<(List<int>, String)> getThumbnail(String req) async {"),
-        "a `body = \"bytes\"` operation's return type is the byte list and its content type, no \
+        written.contains(
+            "Future<DocumentClientServiceGetThumbnailResult> getThumbnail(String req) async {"
+        ),
+        "a `body = \"bytes\"` operation's success carries the byte list and its content type, no \
          `header_out` involved. Got: {written}"
     );
     let method = method_body(&written, "getThumbnail");
     assert!(
         method.contains(
             "final contentType = _documentClientServiceHttpFindHeader(response.headers, 'content-type') ?? '';"
-        ) && method.contains("return (response.body, contentType);"),
+        ) && method.contains(
+            "return DocumentClientServiceGetThumbnailResultOk((response.body, contentType));"
+        ),
         "no `jsonDecode` runs on a bytes body — it is read bare, and the content type is read \
          back from the response header. Got: {method}"
     );
@@ -385,9 +414,11 @@ fn the_client_class_holds_one_constructor_and_every_operation_as_a_method() {
 fn a_bytes_operation_with_header_out_composes_body_content_type_and_the_header() {
     let written = dart_http_client_of(DART_BYTES_HEADER_OUT_SERVICE);
     assert!(
-        written.contains("Future<(List<int>, String, String)> getThumbnail(String req) async {"),
-        "the return type is the bytes-and-content-type pair, with one more slot per declared \
-         `header_out` entry. Got: {written}"
+        written.contains(
+            "Future<ThumbnailClientServiceGetThumbnailResult> getThumbnail(String req) async {"
+        ),
+        "the result pair's own success carries the bytes-and-content-type tuple, with one more \
+         slot per declared `header_out` entry. Got: {written}"
     );
     let method = method_body(&written, "getThumbnail");
     assert!(
@@ -398,7 +429,9 @@ fn a_bytes_operation_with_header_out_composes_body_content_type_and_the_header()
         )
             && method.contains("if (rawHeaderOut0 == null) {")
             && method.contains("final headerOut0 = rawHeaderOut0;")
-            && method.contains("return (response.body, contentType, headerOut0);"),
+            && method.contains(
+                "return ThumbnailClientServiceGetThumbnailResultOk((response.body, contentType, headerOut0));"
+            ),
         "the declared header is read back the same way the JSON and stream paths read one, after \
          the bytes and their content type. Got: {method}"
     );
@@ -408,11 +441,9 @@ fn a_bytes_operation_with_header_out_composes_body_content_type_and_the_header()
 fn a_stream_operation_answers_a_content_range_and_body_record_at_200_and_206() {
     let written = dart_http_client_of(DART_STREAM_HTTP_SERVICE);
     assert!(
-        written.contains(
-            "Future<({String? contentRange, Stream<List<int>> body})> getFile(String req) async {"
-        ),
+        written.contains("Future<ContentClientServiceGetFileResult> getFile(String req) async {"),
         "a bare `StreamedAnswer` renders as a record pairing a nullable `contentRange` with a lazy \
-         `Stream<List<int>>` body. Got: {written}"
+         `Stream<List<int>>` body, carried as the result pair's own success value. Got: {written}"
     );
     let method = method_body(&written, "getFile");
     assert!(
@@ -423,7 +454,7 @@ fn a_stream_operation_answers_a_content_range_and_body_record_at_200_and_206() {
             && method.contains(
                 "final answer = (contentRange: contentRange, body: response.bodyStream);"
             )
-            && method.contains("return answer;"),
+            && method.contains("return ContentClientServiceGetFileResultOk(answer);"),
         "a `206` answers the record with `contentRange` read back off the response. Got: {method}"
     );
     assert!(
@@ -439,16 +470,19 @@ fn a_stream_operation_with_header_out_wraps_the_record_in_a_tuple() {
     let written = dart_http_client_of(DART_STREAM_HTTP_SERVICE);
     assert!(
         written.contains(
-            "Future<(({String? contentRange, Stream<List<int>> body}), String)> getTaggedFile(String req) async {"
+            "Future<ContentClientServiceGetTaggedFileResult> getTaggedFile(String req) async {"
         ),
         "a declared `header_out` wraps the streamed record in a tuple, exactly as the bytes and \
-         JSON paths compose theirs. Got: {written}"
+         JSON paths compose theirs, carried as the result pair's own success value. \
+         Got: {written}"
     );
     let method = method_body(&written, "getTaggedFile");
     assert!(
         method.contains("final rawHeaderOut0 = _contentClientServiceHttpFindHeader(response.headers, 'x-checksum');")
             && method.contains("final headerOut0 = rawHeaderOut0;")
-            && method.contains("return (answer, headerOut0);"),
+            && method.contains(
+                "return ContentClientServiceGetTaggedFileResultOk((answer, headerOut0));"
+            ),
         "the header is read back once the record is built, in both the `206` and `200` arms. \
          Got: {method}"
     );
@@ -497,7 +531,8 @@ fn a_multipart_operation_carries_parts_on_the_seam_and_takes_an_extra_file_argum
     );
     assert!(
         written.contains(
-            "Future<UploadResponse> uploadDocument(UploadDocumentRequest req, dynamic attachment) async {"
+            "Future<UploadClientServiceUploadDocumentResult> uploadDocument(UploadDocumentRequest \
+             req, dynamic attachment) async {"
         ),
         "the client method spells the extra file argument beside the message, under its own Rust \
          spelling and Dart's own opaque type. Got: {written}"

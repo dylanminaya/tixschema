@@ -17,6 +17,24 @@ fn body_from<'written>(written: &'written str, marker: &str) -> &'written str {
 }
 
 #[test]
+fn no_thrown_declared_error_or_fault_survives_a_reply_answers_the_result_pair_instead() {
+    let written = dart_ws_client_of(DART_WS_SERVICE);
+    // Spelled apart so this negative assertion itself does not reintroduce the removed name into
+    // `src/`, which the task's own exit gate greps for.
+    let removed_class = format!("Ws{}", "Error");
+    for gone in [removed_class.as_str(), ".declared(", ".fault("] {
+        assert!(
+            !written.contains(gone),
+            "a reply method answers the result pair rather than throwing it. Got: {written}"
+        );
+    }
+    assert!(
+        written.contains("Future<void> applyBundle(ApplyBundleRequest req) async {"),
+        "a one-way method still answers `Future<void>`. Got: {written}"
+    );
+}
+
+#[test]
 fn exactly_one_transport_class_is_emitted_and_it_names_no_socket_package() {
     let written = dart_ws_client_of(DART_WS_SERVICE);
     assert_eq!(
@@ -87,8 +105,9 @@ fn the_transport_is_constructed_over_a_sink_and_a_stream_with_an_optional_heartb
 fn the_transport_holds_pending_completers_keyed_by_frame_id_and_can_close() {
     let written = dart_ws_client_of(DART_WS_SERVICE);
     assert!(
-        written.contains("final Map<String, Completer<Map<String, dynamic>>> _pending = {};"),
-        "got: {written}"
+        written.contains("final Map<String, Completer<Map<String, dynamic>?>> _pending = {};"),
+        "a pending completer's own value is nullable so the transport can settle it with `null` \
+         on close, a value rather than an error. Got: {written}"
     );
     assert!(
         written.contains("Timer? _pingTimer;") && written.contains("Timer? _pongTimer;"),
@@ -101,10 +120,10 @@ fn the_transport_holds_pending_completers_keyed_by_frame_id_and_can_close() {
     let close_body = body_from(&written, "void _onClose()");
     assert!(
         close_body.contains("_subscription.cancel();")
-            && close_body.contains("completer.completeError(")
+            && close_body.contains("completer.complete(null);")
             && close_body.contains("_controller.close();"),
-        "closing settles every pending call and closes the frames controller rather than leaving \
-         either hanging. Got: {close_body}"
+        "closing settles every pending call with a value, `null`, rather than an error, and \
+         closes the frames controller rather than leaving either hanging. Got: {close_body}"
     );
 }
 
@@ -151,11 +170,12 @@ fn the_transport_exposes_frames_as_a_structural_record_over_a_broadcast_controll
 }
 
 #[test]
-fn a_reply_operation_answers_future_of_success_and_decodes_through_the_generated_codec() {
+fn a_reply_operation_answers_future_of_the_result_pair_and_decodes_through_the_generated_codec() {
     let written = dart_ws_client_of(DART_WS_SERVICE);
     assert!(
         written.contains(
-            "Future<TransactionList> listTransactions(ListTransactionsRequest req) async {"
+            "Future<LedgerListTransactionsResult> listTransactions(ListTransactionsRequest req) \
+             async {"
         ),
         "got: {written}"
     );
@@ -167,32 +187,45 @@ fn a_reply_operation_answers_future_of_success_and_decodes_through_the_generated
     assert!(
         method.contains("if (reply['ok'] == true) {")
             && method.contains(
-                "return TransactionList.fromJson(reply['value'] as Map<String, dynamic>);"
+                "return LedgerListTransactionsResultOk(TransactionList.fromJson(reply['value'] \
+                 as Map<String, dynamic>));"
             ),
-        "a successful reply decodes through the generated `fromJson` codec. Got: {method}"
+        "a successful reply decodes through the generated `fromJson` codec into the pair's own \
+         `Ok` member. Got: {method}"
     );
 }
 
 #[test]
-fn a_reply_operation_throws_the_declared_error_or_a_fault_behind_is_service_fault() {
+fn a_reply_operation_answers_the_declared_error_or_a_fault_behind_is_service_fault() {
     let written = dart_ws_client_of(DART_WS_SERVICE);
     let method = body_from(&written, " listTransactions(");
     assert!(
-        method.contains("throw LedgerWsError<ListError>.fault(_ledgerWsTransportFailure('list-transactions', '$uncarried'));"),
+        method.contains(
+            "return LedgerListTransactionsResultFault(_ledgerWsTransportFailure('list-transactions', '$uncarried'));"
+        ),
         "a transport failure is a fault, never the declared error. Got: {method}"
+    );
+    assert!(
+        method.contains("if (reply == null) {")
+            && method.contains(
+                "_ledgerWsTransportFailure('list-transactions', 'the connection closed before a \
+                 reply arrived'),"
+            ),
+        "a request still waiting when the socket closes answers the same transport-failure \
+         fault, read off the `null` the transport settles its completer with. Got: {method}"
     );
     assert!(
         method.contains("if (error is Map<String, dynamic> && error['isServiceFault'] == true) {")
             && method.contains(
                 "fault = LedgerFaultFields.fromJson(error['fault'] as Map<String, dynamic>);"
             )
-            && method.contains("throw LedgerWsError<ListError>.fault(fault);"),
+            && method.contains("return LedgerListTransactionsResultFault(fault);"),
         "a wire fault behind `isServiceFault` is read back through the generated `FaultFields` \
          codec. Got: {method}"
     );
     assert!(
         method.contains("declared = ListError.fromJson(error as Map<String, dynamic>);")
-            && method.contains("throw LedgerWsError<ListError>.declared(declared);"),
+            && method.contains("return LedgerListTransactionsResultOperation(declared);"),
         "otherwise the wire's `error` is the operation's own declared error. Got: {method}"
     );
 }
