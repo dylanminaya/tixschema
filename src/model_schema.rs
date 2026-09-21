@@ -125,6 +125,9 @@ use crate::features::dart::dart_schema_dispatch;
 #[cfg(feature = "swift")]
 use crate::features::swift::{refuses_swift, swift_schema_dispatch};
 
+#[cfg(feature = "kotlin")]
+use crate::features::kotlin::{kotlin_refused_width, kotlin_schema_dispatch};
+
 #[cfg(any(
     feature = "typescript",
     feature = "zod",
@@ -1202,6 +1205,8 @@ pub fn exec_model_schema(args: TokenStream, input: TokenStream) -> TokenStream {
     // declared type.
     let swift_tokens = swift_suffix_tokens(&item, parsed_args.name_override.as_deref());
     let swift_refusals = swift_width_refusals(&item);
+    // Same independence as the Dart and Swift tokens above.
+    let kotlin_tokens = kotlin_suffix_tokens(&item, parsed_args.name_override.as_deref());
     let expanded = if let Item::Struct(item_struct) = item {
         process_struct(item_struct, &parsed_args)
     } else if let Item::Enum(item_enum) = item {
@@ -1218,7 +1223,7 @@ pub fn exec_model_schema(args: TokenStream, input: TokenStream) -> TokenStream {
     let deferred = with_prefixed_tokens(expanded, &deferred_shape_refusals(registering.as_ref()));
     let bound = with_prefixed_tokens(deferred, &filling_bound_checks);
     let width_checked = with_prefixed_tokens(bound, &swift_refusals);
-    quote! { #width_checked #dart_tokens #swift_tokens }
+    quote! { #width_checked #dart_tokens #swift_tokens #kotlin_tokens }
 }
 
 /// The Dart tokens `item` earns, or nothing without the `dart` feature — always callable, so the
@@ -1242,6 +1247,18 @@ fn swift_suffix_tokens(item: &Item, name_override: Option<&str>) -> TokenStream 
 
 #[cfg(not(feature = "swift"))]
 fn swift_suffix_tokens(_item: &Item, _name_override: Option<&str>) -> TokenStream {
+    TokenStream::new()
+}
+
+/// The Kotlin tokens `item` earns, or nothing without the `kotlin` feature — the same always-
+/// callable shape as [`dart_suffix_tokens`].
+#[cfg(feature = "kotlin")]
+fn kotlin_suffix_tokens(item: &Item, name_override: Option<&str>) -> TokenStream {
+    kotlin_schema_dispatch(item, name_override)
+}
+
+#[cfg(not(feature = "kotlin"))]
+fn kotlin_suffix_tokens(_item: &Item, _name_override: Option<&str>) -> TokenStream {
     TokenStream::new()
 }
 
@@ -11511,11 +11528,19 @@ fn collect_field_guard_errors(
     #[cfg(not(any(feature = "typescript", feature = "zod", feature = "jsonschema")))]
     let map_key_error: Option<proc_macro2::TokenStream> = None;
 
+    #[cfg(feature = "kotlin")]
+    let kotlin_width_error = check_kotlin_width_field(field, field_def, &label)
+        .err()
+        .map(|err| err.to_compile_error());
+    #[cfg(not(feature = "kotlin"))]
+    let kotlin_width_error: Option<proc_macro2::TokenStream> = None;
+
     check_undescribable_std_field(field, field_def, &label)
         .err()
         .map(|err| err.to_compile_error())
         .into_iter()
         .chain(map_key_error)
+        .chain(kotlin_width_error)
         .chain(model_schema_prop_guard_errors(
             field,
             field_def,
@@ -11525,6 +11550,26 @@ fn collect_field_guard_errors(
         ))
         .chain(serde_guard_errors)
         .collect()
+}
+
+/// Rejects a field that reaches `u64` or `usize` at any depth, under the `kotlin` feature: Kotlin's
+/// widest unsigned width is `UInt`, and a pointer-sized width has no Kotlin counterpart at all.
+#[cfg(feature = "kotlin")]
+fn check_kotlin_width_field(
+    field: &Field,
+    field_def: &FieldDef,
+    label: &str,
+) -> Result<(), syn::Error> {
+    let Some(width) = kotlin_refused_width(field_def) else {
+        return Ok(());
+    };
+    Err(syn::Error::new_spanned(
+        field,
+        prefixed_guard_message(&format!(
+            "{label}: `{width}` has no Kotlin mapping; the Kotlin target refuses unsigned 64-bit \
+             and pointer-sized integers"
+        )),
+    ))
 }
 
 /// Every guard the field's `model_schema_prop` attribute earns: what the parser refused, then an

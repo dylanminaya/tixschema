@@ -163,7 +163,7 @@ argument — an alias, a branded newtype — calls `with_opaque_type_parameters`
 
 ### Feature Flag System
 
-The crate uses 8 optional features for minimal dependencies:
+The crate uses 9 optional features for minimal dependencies:
 
 - `serde`: Enables Serde attribute parsing and field renaming
 - `zod`: Enables Zod schema generation (v4 syntax)
@@ -173,10 +173,11 @@ The crate uses 8 optional features for minimal dependencies:
 - `chrono`: Enables chrono date/time type support (`NaiveDate`, `NaiveTime`, `NaiveDateTime`, `DateTime<Tz>`)
 - `dart`: Enables Dart type generation with a JSON codec, and the Dart HTTP client
 - `swift`: Enables Swift type generation with a `Codable` codec
+- `kotlin`: Enables Kotlin type generation with `kotlinx.serialization` annotations. A consuming Kotlin build declares two dependencies: the runtime library `org.jetbrains.kotlinx:kotlinx-serialization-json` and the Kotlin Gradle plugin `kotlin("plugin.serialization")`
 
-**Total combinations tested**: 2^8 = 256 (via `cargo-hack` in CI)
+**Total combinations tested**: 2^9 = 512 (via `cargo-hack` in CI)
 
-**Default configuration**: `serde`, `zod`, `jsonschema`, `typescript` (the `object_id`, `chrono`, `dart` and `swift` features are opt-in)
+**Default configuration**: `serde`, `zod`, `jsonschema`, `typescript` (the `object_id`, `chrono`, `dart`, `swift` and `kotlin` features are opt-in)
 
 ## Critical Development Rules
 

@@ -11,8 +11,8 @@ struct Address {
 }
 
 /// `u64`/`usize` are the whole point of this sweep, so the item is gated out entirely when the
-/// Swift target refuses those widths, rather than swapped to a signed width.
-#[cfg(not(feature = "swift"))]
+/// Swift or Kotlin target refuses those widths, rather than swapped to a signed width.
+#[cfg(not(any(feature = "swift", feature = "kotlin")))]
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct AllNumericTypes {
@@ -307,7 +307,7 @@ fn test_plain_enum_generates_string_enum() {
 }
 
 #[test]
-#[cfg(not(feature = "swift"))]
+#[cfg(not(any(feature = "swift", feature = "kotlin")))]
 fn test_integer_types_use_integer_schema() {
     let schema = AllNumericTypes::json_schema();
 
@@ -326,7 +326,7 @@ fn test_integer_types_use_integer_schema() {
 }
 
 #[test]
-#[cfg(not(feature = "swift"))]
+#[cfg(not(any(feature = "swift", feature = "kotlin")))]
 fn test_float_types_use_number_schema() {
     let schema = AllNumericTypes::json_schema();
 
