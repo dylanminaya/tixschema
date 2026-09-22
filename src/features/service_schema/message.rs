@@ -1,8 +1,8 @@
 //! How the client and the service name the one message an operation receives.
 //!
 //! Read by the client and the dispatcher and by nothing else, so it is gated with them: only a
-//! build with the Zod surface publishes either, and a name and a schema nobody asks for is dead
-//! code.
+//! build with the TypeScript and Zod surfaces publishes either, and a name and a schema nobody
+//! asks for is dead code.
 //!
 //! Both sides take the message as a single object — `getBalance(req)` — where Rust unpacks an
 //! argument list, because that is what a TypeScript caller of the hand-written client types today.

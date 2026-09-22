@@ -122,6 +122,7 @@ just ci
    - `ts_http_service()`: the TypeScript route table and request dispatcher for `http_rest`, mirroring the Rust `dispatch`/`ROUTES` pair
    - `ts_ws_server()`: the TypeScript connection-accepting WebSocket server for Node, wrapping the existing single-socket dispatcher attachment
    - `dart_definition()`: every Dart type a service publishes -- its messages, fault type, and one sealed `{Service}{Operation}Result` pair per reply operation
+   - The module itself is gated on `serde` alone. `typescript` gates only the `ts_*` accessors (and `zod` narrows further, to the client and dispatcher seam); `dart`, `swift` and `kotlin` each gate their own accessors independently, under `serde` plus that language's own feature -- none of the four needs any of the others on
 
 ### Key Data Structures
 
