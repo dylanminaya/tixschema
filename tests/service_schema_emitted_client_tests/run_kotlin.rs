@@ -1,6 +1,12 @@
-//! The emitted Kotlin run under a Kotlin toolchain: the codec rows, the `http_rest` client's own
-//! URLs, the `ws_rpc` client's scenarios against a fake socket, and the mini server sharing its
-//! socket with a second service — standing down as [`super::run_dart`] does with none reachable.
+//! The emitted Kotlin run under a Kotlin toolchain: the codec rows the Kotlin spike proved,
+//! decoded from the JSON Rust wrote and re-encoded; the `http_rest` client's own URLs (the same
+//! three `run_dart.rs` asserts); the `ws_rpc` client's own scenarios against a fake socket; and
+//! the mini server, sharing its socket with a second service, against frames sent by hand.
+//!
+//! Every group compiles one `main.kt` with `kotlinc` and runs the result with `java` — no package
+//! manifest, no Gradle — standing down exactly as [`super::run_dart`] does where no Kotlin
+//! toolchain is reachable. A single fake socket class carries every `ws_rpc` scenario: unpaired
+//! and fed by hand for the client group, paired for the mini-server group's own live connection.
 
 #![cfg(feature = "kotlin")]
 

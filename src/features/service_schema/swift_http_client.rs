@@ -1,6 +1,32 @@
 //! The Swift `http_rest` client: one transport seam the app implements, one `async` method per
-//! operation. A reply operation answers `Result<Success, Failure>` and never throws; a one-way
-//! operation answers `Void` and throws only the fault-only `{Service}Refusal`.
+//! operation, mirroring the Dart client's request grammar statement for statement.
+//!
+//! # A caller reads the outcome; one-way still throws
+//!
+//! A reply operation answers `Result<Success, Failure>` and never throws; a one-way operation
+//! answers `Void` and throws only the fault-only `{Service}Refusal`, having no reply arm to carry
+//! a fault through otherwise — the same outcome shape the TypeScript clients report through.
+//!
+//! # Swift needs two helpers Dart gets for free
+//!
+//! Dart's `Uri.encodeComponent` and `List<String>.join('&')` have no Foundation equivalent that
+//! matches them exactly, so this module writes `{fnPrefix}PercentEncode`/`{fnPrefix}QueryText`
+//! once per service — the RFC 3986 unreserved set plus `-_.!~*'()`, the same characters
+//! `Uri.encodeComponent` leaves unescaped.
+//!
+//! # A message property is reached in Swift's own spelling
+//!
+//! A generated message's Swift property is always `RenameRule::CamelCase.apply_to_field` of the
+//! raw Rust field name — the same spelling an `http(...)` path placeholder or a bodyless method's
+//! own field name is written in — regardless of any serde rename on the field, since Swift's own
+//! `Codable` synthesis carries the wire spelling through a separate `CodingKeys` enum instead.
+//!
+//! # A branded newtype is a value wrapper, not a bare scalar
+//!
+//! Swift's own `Codable` synthesis has no union type, so a branded newtype (`ConversationId`)
+//! publishes a struct with one `value` property rather than TypeScript's intersection brand. A
+//! placeholder or header reading a sibling type's value therefore reads `.value`, never the
+//! sibling type itself.
 
 use crate::field_type::{FieldDefType, get_field_def};
 use crate::rename_rule::RenameRule;

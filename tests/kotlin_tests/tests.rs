@@ -1,6 +1,7 @@
-//! Tests for the Kotlin type and `kotlinx.serialization` codec backend (`kotlin` feature). Each
-//! `#[model_schema]` item earns `kotlin_definition()` inside a `{snake_case}_kotlin` module beside
-//! it, never a direct inherent `impl` (see `features::kotlin::kotlin_module_tokens`).
+//! Tests for the Kotlin type and `kotlinx.serialization` codec backend (`kotlin` feature).
+//!
+//! Each `#[model_schema]` item earns `kotlin_definition()` inside a `{snake_case}_kotlin` module
+//! beside it (never a direct inherent `impl` — see `features::kotlin::kotlin_module_tokens`).
 
 use std::collections::HashMap;
 

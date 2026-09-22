@@ -1,6 +1,9 @@
 //! The emitted `ws_rpc` server run by node against the `ws` package, driven by Node's built-in
-//! `WebSocket` and by the real emitted client. Beside `node` itself, this leg reaches for the
-//! `ws` and `zod` packages through `TIXSCHEMA_NODE_MODULES`, standing down when either is missing.
+//! `WebSocket` and by the real emitted client — the eight scenarios the design proved by hand.
+//!
+//! Beside `node` itself, this leg reaches for the `ws` and `zod` packages through
+//! `TIXSCHEMA_NODE_MODULES`, standing down and naming that variable when either is missing. `just
+//! test-emitted` resolves it up front and refuses to stand down.
 
 use super::runtime::{node_modules, ran_with_modules, stand_down_modules};
 use super::tests::{

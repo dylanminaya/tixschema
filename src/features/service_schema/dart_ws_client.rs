@@ -25,8 +25,11 @@
 //! # A caller reads the outcome, exactly as the `http_rest` Dart client does
 //!
 //! A reply operation answers `Future<{Named}{Operation}Result>` — [`super::dart_result`]'s own
-//! sealed pair — and never throws for a declared error or a fault; a one-way operation still
-//! answers `Future<void>` and throws the fault-only `{Named}WsRefusal`.
+//! sealed pair, the same one `http_rest` answers — and never throws for a declared error or a
+//! fault; a one-way operation still answers `Future<void>` and throws the fault-only
+//! `{Named}WsRefusal`, having no reply arm to carry a fault through. The fault type either arm
+//! carries (`{Named}FaultFields`) is the same shape [`super::dart_http_client`] already answers
+//! with.
 //!
 //! # A decode failure is a failed-validation fault, not an undeserializable-payload one
 //!
@@ -46,9 +49,12 @@
 //! # A handler signals its declared error the same way a caller reads it
 //!
 //! `{Named}Handlers` answers a reply operation with `Future<Success>` and throws the operation's own
-//! declared error to signal it — Dart's idiom for a `Future`. Whenever the inbound frame carried
-//! an id, the attachment always answers it — `ok: true, value: null` on a one-way return, a
-//! fault reply on any dispatch failure — so a pending caller is never left hanging.
+//! declared error to signal it — Dart's idiom for a `Future`, the same one `{Named}WsRefusal` still
+//! uses on the calling side. Anything else a handler throws is unexpected and reaches `onFault`
+//! instead. Whenever the inbound frame carried an id — a caller waiting on a reply, whether the
+//! operation is one-way or not — the attachment answers it: `ok: true, value: null` once a
+//! one-way handler returns, a fault reply for anything that goes wrong before or during dispatch,
+//! so a pending caller is never left hanging.
 
 use super::result::result_name;
 use crate::features::dart::dart_typename;

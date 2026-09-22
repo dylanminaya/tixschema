@@ -1,6 +1,11 @@
-//! The emitted `http_rest` server run under Node, compared against the Rust
-//! `{service}_http_rest_dispatcher!()` twin. Beside `node` itself, this leg reaches for the `zod`
-//! package through `TIXSCHEMA_NODE_MODULES` — the real schemas a bad payload has to fail against.
+//! The emitted `http_rest` server run under Node: the design's seven requests, the reader
+//! forms, a macro-generated message read off the query and the body, a bound `header_in`
+//! echoed back and compared with the Rust twin, and the three body kinds compared against the
+//! Rust `{service}_http_rest_dispatcher!()` twin for the same request.
+//!
+//! Beside `node` itself, this leg reaches for the `zod` package through `TIXSCHEMA_NODE_MODULES`
+//! — the real schemas a bad payload has to fail against, not the stubs `run_node.rs` names for
+//! the URL-shaped client leg. `just test-emitted` resolves it up front and refuses to stand down.
 
 use super::content_http_rest_transport;
 use super::echo_http_rest_transport;
