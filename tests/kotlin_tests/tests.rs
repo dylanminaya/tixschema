@@ -1,7 +1,6 @@
-//! Tests for the Kotlin type and `kotlinx.serialization` codec backend (`kotlin` feature).
-//!
-//! Each `#[model_schema]` item earns `kotlin_definition()` inside a `{snake_case}_kotlin` module
-//! beside it (never a direct inherent `impl` — see `features::kotlin::kotlin_module_tokens`).
+//! Tests for the Kotlin type and `kotlinx.serialization` codec backend (`kotlin` feature). Each
+//! `#[model_schema]` item earns `kotlin_definition()` inside a `{snake_case}_kotlin` module beside
+//! it, never a direct inherent `impl` (see `features::kotlin::kotlin_module_tokens`).
 
 use std::collections::HashMap;
 
@@ -543,11 +542,6 @@ fn test_width_table() {
         );
     }
 }
-
-// The four tests below assert wire spellings and dispatch forms that only `#[serde(...)]`
-// attributes decide — `rename_all`, `tag`, `content`, `untagged`. Without the `serde` feature none
-// of those are read, so every enum here would fall back to the externally-tagged treatment
-// regardless of what it declares (the same fallback the other three surfaces make).
 
 #[test]
 #[cfg(feature = "serde")]
