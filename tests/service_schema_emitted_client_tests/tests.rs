@@ -705,10 +705,6 @@ impl EchoClientService<()> for EchoBackEnd {
 /// A bodyless `GET` carrying no field beside the context at all — the shape the TypeScript
 /// dispatcher used to assemble as `null`, which the generated `z.strictObject({})` refuses. The
 /// Rust twin the group beside this one is measured against.
-///
-/// `purge_pulse` carries a path placeholder for no reason of its own: it exists beside `pulse`
-/// only so the route table this trait shares one macro invocation over has a placeholder-bearing
-/// entry too, since `pulse` itself must have none.
 #[model_schema()]
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PulseResponse {
@@ -726,9 +722,6 @@ pub enum PulseError {
 pub trait PulseClientService<Ctx> {
     #[service_schema_op(http(method = "GET", path = "/pulse"))]
     async fn pulse(&self, ctx: &Ctx) -> Result<PulseResponse, PulseError>;
-
-    #[service_schema_op(one_way, http(method = "DELETE", path = "/pulse/{id}"))]
-    async fn purge_pulse(&self, ctx: &Ctx, id: String);
 }
 
 pub struct PulseBackEnd;
@@ -737,10 +730,6 @@ impl PulseClientService<()> for PulseBackEnd {
     async fn pulse(&self, _ctx: &()) -> Result<PulseResponse, PulseError> {
         ready(()).await;
         Ok(PulseResponse { alive: true })
-    }
-
-    async fn purge_pulse(&self, _ctx: &(), _id: String) {
-        ready(()).await;
     }
 }
 

@@ -513,6 +513,18 @@ pub fn service_declares_multipart(service: &ServiceDef) -> bool {
     })
 }
 
+/// Whether any operation in `service` declares a `{placeholder}` path segment — the
+/// `http_rest` transport needs `PathToken::Placeholder` and its `match_path` arm only then;
+/// a service whose every route is literal has nothing to construct that variant with.
+pub fn service_declares_a_placeholder(service: &ServiceDef) -> bool {
+    service.operations.iter().any(|operation| {
+        HttpShape::of(operation)
+            .path
+            .iter()
+            .any(|segment| matches!(segment, PathSegment::Placeholder(_)))
+    })
+}
+
 /// Whether `service` needs the `BodySource` seam published at all — either body direction reaches
 /// for it: a streamed *response* pulls from one, and a multipart *request*'s own file part hands
 /// one through. The one gate [`crate::service_schema::support`]'s own `stream_seam` reads, so
