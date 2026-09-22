@@ -99,8 +99,10 @@ typecheck-ts:
 # object as the constant `[object Object]`, so only running the client shows which URL comes out.
 # The groups inside `cargo test` stand down when they find no runtime, saying so on stderr. This
 # recipe refuses to stand down — it resolves each runtime up front and names it for the tests,
-# where a named runtime that cannot be started is a failure. Set TIXSCHEMA_NODE, TIXSCHEMA_DART or
-# TIXSCHEMA_SWIFT to use one that is not on PATH.
+# where a named runtime that cannot be started is a failure. Set TIXSCHEMA_NODE, TIXSCHEMA_DART,
+# TIXSCHEMA_SWIFT, TIXSCHEMA_KOTLINC or TIXSCHEMA_JAVA to use one that is not on PATH. The Kotlin
+# leg also needs TIXSCHEMA_KOTLIN_LIBS: a directory holding the serialization compiler plugin jar
+# and the kotlinx-serialization-json, kotlinx-serialization-core and kotlinx-coroutines-core jars.
 test-emitted:
     @command -v "${TIXSCHEMA_NODE:-node}" >/dev/null 2>&1 || { echo "No node: put \`node\` on PATH, or set TIXSCHEMA_NODE to one." >&2; exit 1; }
     @echo "Running the emitted TypeScript client with $(command -v "${TIXSCHEMA_NODE:-node}")..."
@@ -117,6 +119,10 @@ test-emitted:
     @command -v "${TIXSCHEMA_SWIFT:-swift}" >/dev/null 2>&1 || { echo "No Swift toolchain: put \`swift\` on PATH, or set TIXSCHEMA_SWIFT to one." >&2; exit 1; }
     @echo "Running the emitted Swift client with $(command -v "${TIXSCHEMA_SWIFT:-swift}")..."
     TIXSCHEMA_SWIFT="$(command -v "${TIXSCHEMA_SWIFT:-swift}")" cargo test --all-features --test service_schema_emitted_client_tests run_swift
+    @command -v "${TIXSCHEMA_KOTLINC:-kotlinc}" >/dev/null 2>&1 || { echo "No kotlinc: put \`kotlinc\` on PATH, or set TIXSCHEMA_KOTLINC to one." >&2; exit 1; }
+    @test -n "${TIXSCHEMA_KOTLIN_LIBS:-}" || { echo "Set TIXSCHEMA_KOTLIN_LIBS to a directory holding the serialization compiler plugin jar and the three library jars." >&2; exit 1; }
+    @echo "Running the emitted Kotlin client with $(command -v "${TIXSCHEMA_KOTLINC:-kotlinc}")..."
+    TIXSCHEMA_KOTLINC="$(command -v "${TIXSCHEMA_KOTLINC:-kotlinc}")" cargo test --all-features --test service_schema_emitted_client_tests run_kotlin
     @echo "✅ The emitted clients build the URLs they claim to!"
 
 # Check code without running tests
