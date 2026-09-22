@@ -2811,9 +2811,7 @@ fn a_full_http_group_records_the_method_the_path_and_the_status_table() {
     assert!(matches!(binding.body_kind, BodyKind::Json));
 }
 
-/// An `http(...)` group naming no `error_status` table publishes no completeness check at all —
-/// there is nothing for it to be complete against, and the dispatcher answers every declared error
-/// at the fixed default-binding status instead. The same operation naming a table still publishes one.
+/// The dispatcher answers every declared error at the fixed default-binding status instead.
 #[test]
 fn a_table_less_http_group_publishes_no_completeness_check() {
     let table_less = expanded(
@@ -2842,10 +2840,7 @@ fn a_table_less_http_group_publishes_no_completeness_check() {
     );
 }
 
-/// An operation whose declared error type is a recorded `#[serde(untagged)]` enum and whose
-/// `error_status` table names two distinct statuses is refused: the TypeScript server has no
-/// variant to read a status from, since the enum's own `{Enum}$Variant` reader answers `""` for
-/// every value.
+/// The enum's own `{Enum}$Variant` reader answers `""` for every value, so no status can be read.
 #[test]
 fn an_untagged_error_type_mapped_to_two_statuses_is_refused() {
     record_untagged_enum("WidgetErrorUntaggedProbe");
@@ -3198,10 +3193,7 @@ fn the_service_module_carries_one_completeness_check_per_http_error_status() {
     );
 }
 
-/// Only a `Reply` operation naming `http(...)` with a non-empty `error_status` table carries a
-/// completeness check at all: `sweep` names no group, `purge_document` is one-way, and
-/// `create_document`'s group declares no `error_status`, so of the four operations exactly
-/// `get_version` publishes one.
+/// Of the four operations, only `get_version` qualifies.
 #[test]
 fn only_a_reply_operation_naming_a_non_empty_table_carries_a_completeness_check() {
     let expanded =

@@ -401,8 +401,7 @@ fn test_tuple_single_union_typescript() {
     );
 }
 
-/// An untagged enum puts no variant name anywhere in the value, so its reader has nothing to read:
-/// the body is `return "";` for every input.
+/// No variant name anywhere in the value, so the reader has nothing to read.
 #[test]
 #[cfg(feature = "typescript")]
 fn test_untagged_union_variant_reader_body_is_empty() {

@@ -1,10 +1,4 @@
 //! The connection-accepting `ws_rpc` server, read off the emitted text.
-//!
-//! The first test reproduces the design's own section-3 text byte for byte; the rest of these
-//! prove the pieces that text is checked against: `contextFor` runs before the attachment, a write
-//! after close is dropped, the heartbeat only arms when idle and every ping is answered, the
-//! accepted socket carries the required `error` listener, `share` throws once closed, and
-//! `closeAll` closes through the seam's own `close()`.
 
 use super::{SINGLE_PLACEHOLDER_HTTP_SERVICE, ws_server_of};
 

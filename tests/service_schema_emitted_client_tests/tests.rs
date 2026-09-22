@@ -2,10 +2,8 @@
 //! is the author's own struct, bound to a path with one placeholder, carrying one field the path
 //! does not bind.
 
-/// The codec rows the Swift spike proved — renamed and optional fields, the tagged and untagged
-/// enum forms, a tuple, a generic struct, non-string map keys — declared once so `run_swift.rs`
-/// and `run_kotlin.rs` can each round-trip them through their own emitted definition text and
-/// this file's own `serde_json` writes the same JSON against.
+/// Codec rows declared once so `run_swift.rs` and `run_kotlin.rs` can each round-trip them
+/// through their own emitted definition text and this file's own `serde_json` writes.
 #[cfg(any(feature = "swift", feature = "kotlin"))]
 pub mod swift_codec_fixture {
     use serde::{Deserialize, Serialize};
@@ -106,10 +104,8 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 use tixschema::{model_schema, service_schema};
 
-/// The full body the one streamed operation in this file answers.
-///
-/// The streamed operation declares no `header_in` binding of its own, so the answer is always the
-/// full body.
+/// The full body the one streamed operation in this file answers — it declares no `header_in`
+/// binding of its own, so the answer is always the full body.
 const STREAMED_CONTENT: &[u8] = b"the quick brown fox jumps over the lazy dog";
 
 /// The most [`ChunkedSlice::read`] ever answers in one call, so draining [`STREAMED_CONTENT`]
@@ -178,9 +174,7 @@ impl ConversationClientService<()> for ConversationBackEnd {
 
 // -------------------------------------------------------------------------------------------
 // Reader forms: one service per serde form a declared error enum can carry, each with a mapped
-// operation (two declared variants) and an unmapped one (no `error_status` table at all, so
-// every failure answers the fixed default) — except the payload-variant form, whose enum
-// cannot appear in any `error_status` table at all; see `ArchiveClientService`'s own note.
+// operation and an unmapped one — except the payload-variant form, see `ArchiveClientService`.
 // -------------------------------------------------------------------------------------------
 
 #[model_schema()]
@@ -399,8 +393,7 @@ impl SealClientService<()> for SealBackEnd {
 
 // -------------------------------------------------------------------------------------------
 // A macro-generated message read off the query on a bodyless `GET`, and off the whole JSON
-// body on a `POST` at the same path — the coerced fields echoed back so a driver can read
-// exactly what the implementation received.
+// body on a `POST` at the same path — the coerced fields echoed back for a driver to read.
 // -------------------------------------------------------------------------------------------
 
 #[model_schema()]
@@ -463,10 +456,8 @@ impl SearchClientService<()> for SearchBackEnd {
 }
 
 // -------------------------------------------------------------------------------------------
-// The three body kinds no sample had ever run through the server side: `bytes`, `stream` and
-// `multipart`. Each mirrors its own precedent in `tests/service_schema_dispatch_tests/` closely
-// enough that the same request dispatched through the Rust macro and through the emitted
-// TypeScript can be compared byte-for-byte.
+// The three body kinds: `bytes`, `stream` and `multipart`, dispatched through the Rust macro
+// and through the emitted TypeScript so the same request can be compared byte-for-byte.
 // -------------------------------------------------------------------------------------------
 
 #[model_schema()]
@@ -633,9 +624,8 @@ impl UploadDocumentClientService<()> for UploadDocumentBackEnd {
         if title == "toolarge" {
             return Err(UploadDocumentError::TooLarge);
         }
-        // The Node driver's own implementation never reads the part's content either (only its
-        // presence, through `description.is_some()`), so it plays no part in the success value
-        // the two dispatchers are compared on.
+        // The Node driver's own implementation never reads the part's content either, so it
+        // plays no part in the success value the two dispatchers are compared on.
         assert!(
             !drained.is_empty(),
             "the file part must have drained something"
@@ -647,13 +637,8 @@ impl UploadDocumentClientService<()> for UploadDocumentBackEnd {
 }
 
 /// A required `header_in` binding, so the TypeScript implementation reaches for the argument
-/// `create{Service}Dispatcher` now decodes and hands it — the Rust twin the Node driver beside
-/// this one is measured against.
-///
-/// Carries a path placeholder purely so the message is the wire scalar it binds (mirroring
-/// `purge_document`'s own shape): a bodyless `GET`/`DELETE` operation with no placeholder at all
-/// is a separate, pre-existing gap between the two message-assembly rules, filed on its own and
-/// left for that task rather than this one.
+/// `create{Service}Dispatcher` now decodes — the Rust twin the Node driver beside this one is
+/// measured against. Carries a path placeholder so the message is the wire scalar it binds.
 #[model_schema()]
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EchoRangeResponse {
@@ -776,8 +761,7 @@ where
     }
 }
 
-/// The reader-form and query backends' own match arms, checked directly — the driver beside
-/// this one exercises the same behavior again through the emitted TypeScript and a real server.
+/// The driver beside this one exercises the same behavior again through the emitted TypeScript.
 #[test]
 fn every_reader_form_and_query_backend_answers_as_declared() {
     assert_eq!(
@@ -860,8 +844,7 @@ fn every_reader_form_and_query_backend_answers_as_declared() {
     );
 }
 
-/// Read only by the group beside this one, which drives it through the emitted TypeScript and
-/// the Rust dispatcher macro both.
+/// Read only by the group beside this one.
 #[test]
 fn the_echo_backend_answers_the_header_it_was_bound() {
     assert_eq!(
@@ -872,8 +855,7 @@ fn the_echo_backend_answers_the_header_it_was_bound() {
     );
 }
 
-/// Read only by the group beside this one, which drives it through the emitted TypeScript and
-/// the Rust dispatcher macro both.
+/// Read only by the group beside this one.
 #[test]
 fn the_pulse_backend_answers_alive() {
     assert_eq!(

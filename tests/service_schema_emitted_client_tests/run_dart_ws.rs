@@ -1,9 +1,6 @@
-//! The emitted `ws_rpc` Dart client run by the Dart VM, over an in-memory stream pair.
-//!
-//! The `ws_rpc` twin of [`super::run_dart`]: no socket library is reachable here either, so the
-//! driver hands the transport a `StreamController` pair standing in for `WebSocketChannel`'s own
-//! sink and stream, and answers a captured `request` frame by hand. Stands down exactly as
-//! [`super::run_dart`] does where no Dart runtime is reachable.
+//! The emitted `ws_rpc` Dart client run by the Dart VM, over an in-memory stream pair. The
+//! `ws_rpc` twin of [`super::run_dart`]: the driver hands the transport a `StreamController`
+//! pair standing in for `WebSocketChannel`'s own sink and stream.
 
 #![cfg(feature = "dart")]
 

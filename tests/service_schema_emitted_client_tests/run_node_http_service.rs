@@ -1,11 +1,6 @@
-//! The emitted `http_rest` server run under Node: the design's seven requests, the reader
-//! forms, a macro-generated message read off the query and the body, a bound `header_in`
-//! echoed back and compared with the Rust twin, and the three body kinds compared against the
-//! Rust `{service}_http_rest_dispatcher!()` twin for the same request.
-//!
-//! Beside `node` itself, this leg reaches for the `zod` package through `TIXSCHEMA_NODE_MODULES`
-//! — the real schemas a bad payload has to fail against, not the stubs `run_node.rs` names for
-//! the URL-shaped client leg. `just test-emitted` resolves it up front and refuses to stand down.
+//! The emitted `http_rest` server run under Node, compared against the Rust
+//! `{service}_http_rest_dispatcher!()` twin. Beside `node` itself, this leg reaches for the `zod`
+//! package through `TIXSCHEMA_NODE_MODULES` — the real schemas a bad payload has to fail against.
 
 use super::content_http_rest_transport;
 use super::echo_http_rest_transport;
@@ -96,13 +91,9 @@ async function main() {
 main().catch((error) => { console.error(error); process.exit(1); });
 "#;
 
-/// One call per case, straight against the exported dispatcher — no listening server, mirroring
-/// how the Rust twins beside this file are driven by hand in
-/// `tests/service_schema_dispatch_tests/`.
-///
-/// `ArchiveError` carries a payload variant, which cannot be named in an `error_status` table, so
-/// `ArchiveError$Variant` is read directly instead, off two hand-built wire values, one per shape
-/// the reader has to tell apart.
+/// One call per case, straight against the exported dispatcher — no listening server. `ArchiveError`
+/// carries a payload variant, which cannot be named in an `error_status` table, so
+/// `ArchiveError$Variant` is read directly instead, off two hand-built wire values.
 const READER_FORMS_DRIVER: &str = r#"
 function req(method, path, body = new Uint8Array()) {
   return { method, path, query: "", headers: [], body };
@@ -626,9 +617,8 @@ fn each_reader_form_picks_the_mapped_status() {
 }
 
 // -------------------------------------------------------------------------------------------
-// Group 3: a macro-generated message read off the query on a bodyless `GET`, and off the whole
-// JSON body on a `POST` — plus the 400 `failed-validation` a bad payload earns against the real
-// schema this leg's `zod` package makes possible.
+// Group 3: a macro-generated message read off the query on a bodyless `GET` and off the body on
+// a `POST`, plus the 400 `failed-validation` a bad payload earns against the real schema.
 // -------------------------------------------------------------------------------------------
 
 fn search_emitted() -> String {
@@ -679,8 +669,7 @@ fn a_generated_message_is_read_off_the_query_and_the_body() {
 
 // -------------------------------------------------------------------------------------------
 // Group 4: one `bytes`, one `stream` and one `multipart` operation, each answer compared
-// byte-for-byte with what the Rust `{service}_http_rest_dispatcher!()` answers for the same
-// request.
+// byte-for-byte with the Rust `{service}_http_rest_dispatcher!()` twin.
 // -------------------------------------------------------------------------------------------
 
 fn sorted(mut headers: Vec<(String, String)>) -> Vec<(String, String)> {
@@ -946,12 +935,8 @@ fn multipart_body_kind_agrees_with_rust() {
     );
     assert_eq!(rust_too_large.status, 413, "got: {rust_too_large:#?}");
 
-    // The missing-part fault's `detail` text is no longer byte-equal with Rust's: this dispatcher
-    // now builds it through the shared `{prefix}InboundFault` a bad payload also answers through
-    // (the task the header echo group above documents), whose `detail` embeds the field the way a
-    // zod issue's own message does (`'file': ...`), where the Rust `multipart_part_let` writes the
-    // bare message and carries the field in its own `field`. `status`, `kind` and `field` still
-    // agree, and those are compared here instead of the raw body.
+    // The missing-part fault's `detail` text is no longer byte-equal with Rust's, so `status`,
+    // `kind` and `field` are compared here instead of the raw body.
     let node_missing_file = node_answered(&results["missingFile"]);
     let rust_missing_file = upload_document_rust_answered(vec![(
         "title".to_owned(),
@@ -1041,11 +1026,8 @@ fn a_bound_header_reaches_the_implementation_and_agrees_with_the_rust_dispatcher
         "got: {rust_present:#?}"
     );
 
-    // `detail` is not compared byte-for-byte: the TypeScript dispatcher answers a missing
-    // required header through the same `InboundFault` a bad payload gets, whose `detail` embeds
-    // the field the way a zod issue's own message does (`'range': ...`), where the Rust
-    // `header_in_let` writes the bare message and carries the field in its own `field`. `status`,
-    // `kind` and `field` agree, and those are compared here instead of the raw body.
+    // `detail` is not compared byte-for-byte: it differs from the Rust dispatcher's own text, so
+    // `status`, `kind` and `field` are compared here instead of the raw body.
     let node_absent = node_answered(&results["absent"]);
     let rust_absent = echo_rust_answered(Vec::new());
     assert_eq!(
@@ -1133,10 +1115,9 @@ fn a_bodyless_operation_with_no_field_assembles_the_same_message_as_the_rust_dis
 // `tests/service_schema_dispatch_tests/` makes for every other dispatcher macro placement.
 // -------------------------------------------------------------------------------------------
 
-/// The accessors one `IncomingRequest` reads back everything it was built with — the same claim
-/// every other dispatcher macro placement makes for its own. Takes the accessors' own answers
-/// rather than the request itself: the three placement modules' `IncomingRequest` share this
-/// shape but not a trait, each being a bare item a macro emitted into a module of its own.
+/// One `IncomingRequest` reads back everything it was built with. Takes the accessors' own
+/// answers rather than the request itself: the three placement modules' `IncomingRequest` share
+/// this shape but not a trait.
 fn assert_incoming_request_reads_back(
     body: &[u8],
     query: &str,

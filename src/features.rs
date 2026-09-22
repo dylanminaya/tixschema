@@ -33,9 +33,8 @@ pub mod kotlin;
 pub mod model_schema_prop;
 
 // Gated on `serde`, because `#[service_schema]` is: the emitters this module names live in
-// `crate::service_schema`, which a build without that feature does not have. Not also gated on
-// `typescript`: the module holds every language's accessors, and `typescript`, `dart`, `swift` and
-// `kotlin` each gate only their own.
+// `crate::service_schema`. Not gated on `typescript`: the module holds every language's
+// accessors, each gated individually.
 #[cfg(feature = "serde")]
 pub mod service_schema;
 
@@ -99,7 +98,6 @@ impl Features {
         cfg!(feature = "jsonschema")
     }
 
-    /// Check if `kotlin` feature is enabled.
     pub const fn has_kotlin() -> bool {
         cfg!(feature = "kotlin")
     }
@@ -114,7 +112,6 @@ impl Features {
         cfg!(feature = "serde")
     }
 
-    /// Check if `swift` feature is enabled.
     pub const fn has_swift() -> bool {
         cfg!(feature = "swift")
     }
