@@ -33,7 +33,7 @@ just quick
 # or
 cargo test
 
-# Comprehensive test - all 128 feature combinations (run before commits)
+# Comprehensive test - every combination of the plain features (run before a release)
 just test
 
 # Test specific feature combinations
@@ -166,7 +166,7 @@ argument — an alias, a branded newtype — calls `with_opaque_type_parameters`
 
 ### Feature Flag System
 
-The crate uses 9 optional features for minimal dependencies:
+The crate uses optional features for minimal dependencies:
 
 - `serde`: Enables Serde attribute parsing and field renaming
 - `zod`: Enables Zod schema generation (v4 syntax)
@@ -178,7 +178,7 @@ The crate uses 9 optional features for minimal dependencies:
 - `swift`: Enables Swift type generation with a `Codable` codec
 - `kotlin`: Enables Kotlin type generation with `kotlinx.serialization` annotations. A consuming Kotlin build declares two dependencies: the runtime library `org.jetbrains.kotlinx:kotlinx-serialization-json` and the Kotlin Gradle plugin `kotlin("plugin.serialization")`
 
-**Total combinations tested**: 2^9 = 512 (via `cargo-hack` in CI)
+**Feature sets**: `web` (the default: `serde`, `zod`, `jsonschema`, `typescript`), `mobile` (`serde`, `dart`, `swift`, `kotlin`) and `mongo` (`object_id`, `chrono`). CI tests the powerset of the sets (`just test-sets`); `just test` runs the powerset of the plain features locally
 
 **Default configuration**: `serde`, `zod`, `jsonschema`, `typescript` (the `object_id`, `chrono`, `dart`, `swift` and `kotlin` features are opt-in)
 
@@ -897,7 +897,7 @@ The CI pipeline ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs:
 1. `cargo build --verbose`
 2. `just check` (cargo check + clippy)
 3. `cargo test --verbose` (basic tests)
-4. `just test` (all 128 feature combinations via cargo-hack)
+4. `just test-sets` (every combination of the `web`, `mobile` and `mongo` feature sets via cargo-hack)
 5. Discord notification with build status
 
 **Before pushing**, run `just ci` locally to replicate the CI pipeline.

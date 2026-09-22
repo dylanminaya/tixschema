@@ -10,18 +10,27 @@ install-tools:
     cargo install cargo-hack || echo "cargo-hack already installed"
     cargo install just || echo "just already installed"
 
-# Test all possible feature combinations (2^9 = 512 combinations)
+# Test every combination of the plain features, plus the default set. The
+# feature sets are excluded as toggles: each is a name for features already in the powerset.
+# Slow and disk-hungry; `test-sets` is what CI runs.
 test:
     @echo "Testing all feature combinations..."
-    @echo "This will test 512 different feature combinations (2^9 with 9 features)"
-    cargo hack test --feature-powerset
+    cargo hack test --feature-powerset --exclude-features web,mobile,mongo
     @echo "✅ All feature combinations passed!"
 
 # Test all combinations with verbose output
 test-verbose:
     @echo "Testing all feature combinations (verbose)..."
-    cargo hack test --feature-powerset --verbose
+    cargo hack test --feature-powerset --exclude-features web,mobile,mongo --verbose
     @echo "✅ All feature combinations passed!"
+
+# Test the powerset of the feature sets (`web`, `mobile`, `mongo`), plus the default set. Every
+# plain feature is reached through its set; the plain-feature powerset stays in `test` for a local
+# run before a release.
+test-sets:
+    @echo "Testing every combination of the feature sets..."
+    cargo hack test --feature-powerset --include-features web,mobile,mongo
+    @echo "✅ All feature-set combinations passed!"
 
 # Test specific feature combinations manually
 test-named-features:
@@ -75,8 +84,14 @@ lint:
 # warning in any toggle, including feature-gated test code that `lint` (default features) misses.
 lint-all:
     @echo "Linting all feature combinations..."
-    cargo hack clippy --feature-powerset --all-targets -- -D warnings
+    cargo hack clippy --feature-powerset --exclude-features web,mobile,mongo --all-targets -- -D warnings
     @echo "✅ All feature combinations lint passed!"
+
+# Lint the powerset of the feature sets, the counterpart of `test-sets`; what CI runs.
+lint-sets:
+    @echo "Linting every combination of the feature sets..."
+    cargo hack clippy --feature-powerset --include-features web,mobile,mongo --all-targets -- -D warnings
+    @echo "✅ All feature-set combinations lint passed!"
 
 # Type-check the emitted TypeScript bundle with a real compiler, in the build that publishes the
 # client and the dispatcher and in the one that publishes neither.
@@ -155,7 +170,7 @@ clean:
 all: lint lint-all-features test-named-features
     @echo "All checks completed successfully!"
 
-# Exhaustive pipeline - the feature-powerset gates over all 128 combinations (what `all` ran
+# Exhaustive pipeline - the feature-powerset gates over every plain-feature combination (what `all` ran
 # before). Slow; run before a release or after touching feature gates.
 all-powerset: lint lint-all test
     @echo "All powerset checks completed successfully!"

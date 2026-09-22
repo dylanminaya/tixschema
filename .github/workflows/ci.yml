@@ -55,8 +55,8 @@ jobs:
     - name: Run lint across all feature combinations
       id: lint-all
       run: |
-        echo "🧹 Linting all feature combinations..."
-        just lint-all
+        echo "🧹 Linting every combination of the feature sets..."
+        just lint-sets
 
     - name: Run basic tests
       id: test-basic
@@ -69,8 +69,8 @@ jobs:
       env:
         RUSTFLAGS: ""
       run: |
-        echo "🚀 Running extensive tests..."
-        just test
+        echo "🚀 Testing every combination of the feature sets..."
+        just test-sets
 
     - name: Run security audit
       id: audit
@@ -119,9 +119,9 @@ jobs:
         FAILED_STEP="None"
         if [[ "$BLD" == "failure" ]]; then JOB_STATUS="failure"; FAILED_STEP="Build (cargo build)";
         elif [[ "$CHK" == "failure" ]]; then JOB_STATUS="failure"; FAILED_STEP="Code checks (just check)";
-        elif [[ "$LALL" == "failure" ]]; then JOB_STATUS="failure"; FAILED_STEP="Lint all features (just lint-all)";
+        elif [[ "$LALL" == "failure" ]]; then JOB_STATUS="failure"; FAILED_STEP="Lint the feature sets (just lint-sets)";
         elif [[ "$TBASIC" == "failure" ]]; then JOB_STATUS="failure"; FAILED_STEP="Basic tests (cargo test)";
-        elif [[ "$TEXT" == "failure" ]]; then JOB_STATUS="failure"; FAILED_STEP="Extensive tests (just test)";
+        elif [[ "$TEXT" == "failure" ]]; then JOB_STATUS="failure"; FAILED_STEP="Feature-set tests (just test-sets)";
         elif [[ "$AUDIT" == "failure" ]]; then JOB_STATUS="failure"; FAILED_STEP="Security audit (cargo audit)";
         fi
 

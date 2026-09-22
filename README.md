@@ -3400,7 +3400,7 @@ tixschema = { default-features = false, features = ["typescript"] }
 tixschema = { default-features = false, features = ["serde", "zod", "typescript"] }
 ```
 
-All 2^9 = 512 feature combinations are tested in CI via `cargo-hack`.
+CI tests every combination of the feature sets (`web`, `mobile`, `mongo`) via `cargo-hack`; `just test` runs every combination of the plain features locally.
 
 ## Generating TypeScript Files
 
