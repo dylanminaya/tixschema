@@ -3096,6 +3096,46 @@ fn an_optional_field_unbound_by_the_path_of_a_bodyless_method_is_not_refused() {
     );
 }
 
+/// A service whose every route is a literal path never constructs `PathToken::Placeholder`, so the
+/// `http_rest` expansion writes neither the variant nor its `match_path` arm — the same rule
+/// already applied to the query reader and the multipart part type.
+#[test]
+fn an_all_literal_route_table_writes_no_placeholder_variant() {
+    let dispatcher = published_macro_over_http_rest(
+        "pub trait PulseService<Ctx> {
+            #[service_schema_op(http(method = \"GET\", path = \"/pulse\"))]
+            async fn pulse(&self, ctx: &Ctx) -> Result<PulseResponse, PulseError>;
+        }",
+        "pulse_service_http_rest_dispatcher",
+    );
+    assert!(
+        dispatcher.contains("enum PathToken { Literal (& 'static str) , }"),
+        "got: {dispatcher}"
+    );
+    assert!(!dispatcher.contains("Placeholder"), "got: {dispatcher}");
+}
+
+/// A service declaring one placeholder path still writes both the variant and its `match_path`
+/// arm.
+#[test]
+fn a_route_table_with_a_placeholder_writes_the_placeholder_variant() {
+    let dispatcher = published_macro_over_http_rest(
+        "pub trait PulseService<Ctx> {
+            #[service_schema_op(http(method = \"GET\", path = \"/pulse/{id}\"))]
+            async fn pulse(&self, ctx: &Ctx, id: String) -> Result<PulseResponse, PulseError>;
+        }",
+        "pulse_service_http_rest_dispatcher",
+    );
+    assert!(
+        dispatcher.contains("enum PathToken { Literal (& 'static str) , Placeholder , }"),
+        "got: {dispatcher}"
+    );
+    assert!(
+        dispatcher.contains("PathToken :: Placeholder =>"),
+        "got: {dispatcher}"
+    );
+}
+
 /// `header_in` naming a parameter that answers to no argument in the signature is refused, naming
 /// the parameter.
 #[test]

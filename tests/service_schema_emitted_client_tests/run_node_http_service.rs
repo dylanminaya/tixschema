@@ -1041,13 +1041,11 @@ fn a_bound_header_reaches_the_implementation_and_agrees_with_the_rust_dispatcher
         "got: {rust_present:#?}"
     );
 
-    // The 400 case is not compared byte-for-byte with the Rust twin: the Rust `header_in_let`
-    // decode (`http_rest.rs`) answers a missing required header through the same generic
-    // `refused_payload` a malformed payload gets, which names no field for a scalar type failing
-    // to deserialize from `null` — unlike the sibling `multipart_part_let`, which does name one.
-    // That gap is Rust's own and pre-dates this task; only the status is compared here, and the
-    // TypeScript side's own `field` is asserted against the framed fault this task's dispatcher
-    // now builds.
+    // `detail` is not compared byte-for-byte: the TypeScript dispatcher answers a missing
+    // required header through the same `InboundFault` a bad payload gets, whose `detail` embeds
+    // the field the way a zod issue's own message does (`'range': ...`), where the Rust
+    // `header_in_let` writes the bare message and carries the field in its own `field`. `status`,
+    // `kind` and `field` agree, and those are compared here instead of the raw body.
     let node_absent = node_answered(&results["absent"]);
     let rust_absent = echo_rust_answered(Vec::new());
     assert_eq!(
@@ -1056,12 +1054,17 @@ fn a_bound_header_reaches_the_implementation_and_agrees_with_the_rust_dispatcher
     );
     assert_eq!(rust_absent.status, 400, "got: {rust_absent:#?}");
     let node_absent_body: serde_json::Value = serde_json::from_slice(&node_absent.body).unwrap();
+    let rust_absent_body: serde_json::Value = serde_json::from_slice(&rust_absent.body).unwrap();
     assert_eq!(
-        node_absent_body["field"], "range",
+        node_absent_body["field"], rust_absent_body["field"],
         "got: {node_absent_body:#?}"
     );
     assert_eq!(
-        node_absent_body["kind"], "failed-validation",
+        node_absent_body["kind"], rust_absent_body["kind"],
+        "got: {node_absent_body:#?}"
+    );
+    assert_eq!(
+        node_absent_body["field"], "range",
         "got: {node_absent_body:#?}"
     );
 }
@@ -1356,7 +1359,7 @@ fn the_pulse_route_table_and_incoming_request_read_back_what_they_were_built_wit
     let routes = pulse_http_rest_transport::ROUTES;
     assert_eq!(
         routes.len(),
-        2,
+        1,
         "got: {:?}",
         routes
             .iter()
@@ -1368,11 +1371,6 @@ fn the_pulse_route_table_and_incoming_request_read_back_what_they_were_built_wit
     assert_eq!(routes[0].operation(), "pulse");
     assert_eq!(routes[0].ok_status(), 200);
     assert_eq!(routes[0].error_statuses(), &[422]);
-    assert_eq!(routes[1].method(), "DELETE");
-    assert_eq!(routes[1].path(), "/pulse/{id}");
-    assert_eq!(routes[1].operation(), "purge-pulse");
-    assert_eq!(routes[1].ok_status(), 204);
-    assert_eq!(routes[1].error_statuses(), &[] as &[u16]);
 
     let request = pulse_http_rest_transport::IncomingRequest::new(
         "GET".to_owned(),

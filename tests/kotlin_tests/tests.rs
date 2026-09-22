@@ -189,6 +189,55 @@ pub struct Wrapper<T> {
     pub value: T,
 }
 
+// ---------------------------------------------------------------------------------------------
+// A generic enum with a unit variant: the sealed base declares its parameters `out`, and the unit
+// variant implements it at `Nothing` rather than repeating an unbound `T`.
+// ---------------------------------------------------------------------------------------------
+
+#[model_schema(default_types(T = String))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Choice<T> {
+    None,
+    Value(T),
+}
+
+// ---------------------------------------------------------------------------------------------
+// `#[serde(flatten)]`: a flattened struct, a flattened `Option<Struct>`, and a flattened map — each
+// earns a generated merging `KSerializer` beside the ordinary `@Serializable` data class.
+// ---------------------------------------------------------------------------------------------
+
+#[model_schema()]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stamp {
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[model_schema()]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Audit {
+    pub id: String,
+    #[serde(flatten)]
+    pub stamp: Stamp,
+}
+
+#[model_schema()]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OptionalAudit {
+    pub id: String,
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub stamp: Option<Stamp>,
+}
+
+#[model_schema()]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaggedRecord {
+    pub id: String,
+    #[serde(flatten)]
+    pub tags: HashMap<String, String>,
+}
+
 #[test]
 fn test_every_declared_type_is_constructible() {
     let window_request = WindowRequest {
@@ -272,6 +321,30 @@ fn test_every_declared_type_is_constructible() {
         value: "wrapped".to_owned(),
     };
     assert_eq!(wrapper.value, "wrapped");
+
+    let choices = [Choice::Value("x".to_owned()), Choice::<String>::None];
+    assert_eq!(choices.len(), 2);
+
+    let audit = Audit {
+        id: "a".to_owned(),
+        stamp: Stamp {
+            created_at: "2026-09-21T13:45:30Z".to_owned(),
+            updated_at: None,
+        },
+    };
+    assert_eq!(audit.id, "a");
+
+    let optional_audit = OptionalAudit {
+        id: "a".to_owned(),
+        stamp: None,
+    };
+    assert_eq!(optional_audit.stamp, None);
+
+    let tagged_record = TaggedRecord {
+        id: "a".to_owned(),
+        tags: HashMap::from([("color".to_owned(), "red".to_owned())]),
+    };
+    assert_eq!(tagged_record.tags.len(), 1);
 }
 
 #[test]
@@ -516,5 +589,69 @@ fn test_generic_struct() {
     assert!(
         kotlin.contains("data class Wrapper<T>(val value: T)"),
         "got: {kotlin}"
+    );
+}
+
+#[test]
+fn test_generic_enum_unit_variant() {
+    let kotlin = choice_kotlin::kotlin_definition();
+    assert!(
+        kotlin.contains("sealed interface Choice<out T>"),
+        "the sealed base declares its parameters `out`. got: {kotlin}"
+    );
+    assert!(
+        kotlin.contains("@Serializable data class ChoiceValue<T>(val value: T) : Choice<T>"),
+        "a data-carrying variant still implements the base at its own `T`. got: {kotlin}"
+    );
+    assert!(
+        kotlin.contains("data object ChoiceNone : Choice<Nothing>"),
+        "a unit variant implements the base at `Nothing` rather than an unbound `T`. got: {kotlin}"
+    );
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn test_flatten_struct() {
+    let kotlin = audit_kotlin::kotlin_definition();
+    assert!(
+        kotlin.contains("@Serializable(with = AuditSerializer::class) data class Audit("),
+        "got: {kotlin}"
+    );
+    assert!(
+        kotlin.contains("object AuditSerializer : KSerializer<Audit>"),
+        "got: {kotlin}"
+    );
+    assert!(kotlin.contains(".jsonObject.forEach"), "got: {kotlin}");
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn test_flatten_optional_struct() {
+    let kotlin = optional_audit_kotlin::kotlin_definition();
+    assert!(
+        kotlin.contains(
+            "@Serializable(with = OptionalAuditSerializer::class) data class OptionalAudit("
+        ),
+        "got: {kotlin}"
+    );
+    assert!(
+        kotlin.contains("elementNames"),
+        "an absent flattened `Option` is told apart by its own declared keys. got: {kotlin}"
+    );
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn test_flatten_map() {
+    let kotlin = tagged_record_kotlin::kotlin_definition();
+    assert!(
+        kotlin.contains(
+            "@Serializable(with = TaggedRecordSerializer::class) data class TaggedRecord("
+        ),
+        "got: {kotlin}"
+    );
+    assert!(
+        kotlin.contains("filterKeys") || kotlin.contains("filter {"),
+        "a flattened map takes whatever keys are left over. got: {kotlin}"
     );
 }
