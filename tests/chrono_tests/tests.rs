@@ -1,3 +1,26 @@
+/// An epoch-seconds hook, written by hand, to prove `as_number` holds back its injected
+/// millisecond hook where a field already reads itself through one of its own.
+mod epoch_seconds {
+    use chrono::{DateTime, Utc};
+    use serde::de::Error as _;
+    use serde::{Deserialize as _, Deserializer, Serializer};
+
+    pub fn serialize<S>(dt: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_i64(dt.timestamp())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let secs = i64::deserialize(deserializer)?;
+        DateTime::from_timestamp(secs, 0).ok_or_else(|| D::Error::custom("bad timestamp"))
+    }
+}
+
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use std::collections::HashMap;
 
@@ -154,6 +177,14 @@ struct Sample {
 pub enum DynamicValue {
     Native(DateTime<Utc>),
     Number(#[model_schema_prop(as_number)] DateTime<Utc>),
+}
+
+#[model_schema()]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct CustomEpochHook {
+    #[model_schema_prop(as_number)]
+    #[serde(with = "epoch_seconds")]
+    stamp: DateTime<Utc>,
 }
 
 #[test]
@@ -773,4 +804,41 @@ fn test_as_number_types_constructible() {
     assert_eq!(sample.created_at, dt);
     let values = [DynamicValue::Native(dt), DynamicValue::Number(dt)];
     assert_eq!(values.len(), 2);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn an_as_number_field_crosses_the_wire_as_epoch_milliseconds() {
+    let sample = Sample {
+        created_at: DateTime::from_timestamp_millis(1_758_000_000_000).unwrap(),
+        due_at: DateTime::from_timestamp_millis(1_758_000_000_000).unwrap(),
+        start_time: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+    };
+    let json = serde_json::to_string(&sample).unwrap();
+    assert!(
+        json.contains(r#""created_at":1758000000000"#),
+        "as_number must write epoch milliseconds. Got: {json}"
+    );
+    assert!(
+        json.contains(r#""due_at":"2025-09-16T05:20:00Z""#),
+        "a DateTime without the flag keeps chrono's string. Got: {json}"
+    );
+    let back: Sample = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, sample);
+    let variant = serde_json::to_string(&DynamicValue::Number(sample.created_at)).unwrap();
+    assert_eq!(variant, r#"{"type":"Number","value":1758000000000}"#);
+}
+
+#[test]
+fn as_number_holds_back_where_the_author_wrote_their_own_hook() {
+    let value = CustomEpochHook {
+        stamp: DateTime::from_timestamp(1_758_000_000, 0).unwrap(),
+    };
+    let json = serde_json::to_string(&value).unwrap();
+    assert_eq!(
+        json, r#"{"stamp":1758000000}"#,
+        "the author's own seconds hook must run, not the injected milliseconds one. Got: {json}"
+    );
+    let back: CustomEpochHook = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, value);
 }

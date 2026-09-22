@@ -70,6 +70,12 @@
 //!   classes, the transport seam, one sealed result per reply operation, and a `suspend`-method-
 //!   per-operation client, over the `kotlin` feature's own types and codec (published only where
 //!   the `kotlin` feature is on).
+//! - `kotlin_ws_client()`: the Kotlin sibling of `dart_ws_client()` — a transport that owns the
+//!   socket, a `suspend`-method-per-operation client answering `kotlin_http_client()`'s own
+//!   sealed result, and a dispatcher attachment for a service the app implements, over the
+//!   `kotlin` feature's own types and codec (published only where the `kotlin` feature is on). A
+//!   bundle names `kotlin_http_client()` before this, so the sealed result type it answers with
+//!   is declared.
 //!
 //! # The client and the dispatcher exist only where the Zod surface does
 //!
@@ -127,6 +133,8 @@ mod http_client;
 mod http_service;
 #[cfg(feature = "kotlin")]
 mod kotlin_http_client;
+#[cfg(feature = "kotlin")]
+mod kotlin_ws_client;
 #[cfg(all(feature = "typescript", feature = "zod"))]
 mod message;
 mod result;
@@ -267,17 +275,27 @@ fn swift_seam(service: &ServiceDef) -> TokenStream {
 
 /// The service's generated Kotlin `http_rest` client: request/response data classes, a transport
 /// seam the hosting application implements, one sealed result per reply operation, and a
-/// `suspend`-method-per-operation client — published only where the `kotlin` feature publishes the
-/// Kotlin types and codec this client's messages, successes and errors are written in.
+/// `suspend`-method-per-operation client; and the Kotlin `ws_rpc` sibling: a transport that owns
+/// the socket, a client answering the same sealed result, and a dispatcher attachment for a
+/// service the app implements — published only where the `kotlin` feature publishes the Kotlin
+/// types and codec this client's messages, successes and errors are written in.
 #[cfg(feature = "kotlin")]
 fn kotlin_seam(service: &ServiceDef) -> TokenStream {
     let client = kotlin_http_client::emit(service).join("\n\n");
+    let ws_client = kotlin_ws_client::emit(service).join("\n\n");
     quote! {
         #[doc = " The service's generated Kotlin `http_rest` client: request/response data"]
         #[doc = " classes, the transport seam, one sealed result per reply operation, and the"]
         #[doc = " client class with one `suspend` method per operation."]
         pub fn kotlin_http_client() -> String {
             #client.to_owned()
+        }
+
+        #[doc = " The service's generated Kotlin `ws_rpc` client: the transport that owns the"]
+        #[doc = " socket, the client class answering `kotlin_http_client()`'s own sealed result,"]
+        #[doc = " and the dispatcher attachment for a service the app implements."]
+        pub fn kotlin_ws_client() -> String {
+            #ws_client.to_owned()
         }
     }
 }
