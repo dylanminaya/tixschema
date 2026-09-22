@@ -38,7 +38,7 @@
 //! attributes a generated message needs onto them.
 
 use crate::rename_rule::RenameRule;
-use crate::utils::is_wire_scalar_type;
+use crate::utils::{is_recorded_untagged_enum, is_wire_scalar_type};
 use proc_macro2::TokenTree;
 use quote::{ToTokens as _, format_ident};
 use std::collections::{HashMap, HashSet};
@@ -513,6 +513,18 @@ pub fn service_declares_multipart(service: &ServiceDef) -> bool {
     })
 }
 
+/// Whether any operation in `service` declares a `{placeholder}` path segment — the
+/// `http_rest` transport needs `PathToken::Placeholder` and its `match_path` arm only then;
+/// a service whose every route is literal has nothing to construct that variant with.
+pub fn service_declares_a_placeholder(service: &ServiceDef) -> bool {
+    service.operations.iter().any(|operation| {
+        HttpShape::of(operation)
+            .path
+            .iter()
+            .any(|segment| matches!(segment, PathSegment::Placeholder(_)))
+    })
+}
+
 /// Whether `service` needs the `BodySource` seam published at all — either body direction reaches
 /// for it: a streamed *response* pulls from one, and a multipart *request*'s own file part hands
 /// one through. The one gate [`crate::service_schema::support`]'s own `stream_seam` reads, so
@@ -589,6 +601,31 @@ pub fn tuple_elements(ty: &Type) -> Option<&Punctuated<Type, Token![,]>> {
 /// body would carry the field under.
 pub fn wire_key(field: &Ident) -> String {
     RenameRule::CamelCase.apply_to_field(&field.to_string())
+}
+
+/// The name a declared type's own value carries at its leaf path segment — `WindowError` out of
+/// `WindowError` or a module-qualified path — read the same shallow way every other type check
+/// here reads one. Empty for anything not a bare path, which nothing that calls this reaches for.
+pub fn type_leaf_name(ty: &Type) -> String {
+    let Type::Path(named) = ty else {
+        return String::new();
+    };
+    named
+        .path
+        .segments
+        .last()
+        .map_or_else(String::new, |segment| segment.ident.to_string())
+}
+
+/// An operation whose declared error type is a recorded `#[serde(untagged)]` enum, and whose
+/// `error_status` table names more than one distinct status: no variant can be read off the
+/// value, so a TypeScript reader could only guess which status the implementation meant.
+fn untagged_multi_status_message(operation: &Ident, error_name: &str) -> String {
+    format!(
+        "service_schema: operation `{operation}`: `{error_name}` is `#[serde(untagged)]`, so no \
+         variant can be read off its value to pick a status\n       \
+         give the enum a tag or map every variant to one status"
+    )
 }
 
 fn unknown_http_method_message(written: &str) -> String {
@@ -1610,6 +1647,85 @@ fn extra_arguments(operation: &TraitItemFn) -> HashMap<String, Type> {
 ///
 /// error: could not compile `tixschema` (test "zz_probe") due to 1 previous error
 /// ```
+///
+/// # Refusing an untagged error type mapped to more than one status
+///
+/// The TypeScript `http_rest` server reads a declared error's status off the Rust variant name a
+/// `#[model_schema]` reader publishes for the error enum, and an enum declared `#[serde(untagged)]`
+/// publishes no such name — its wire form carries nothing to read one off. A table mapping every
+/// variant to the *same* status needs no reader at all and is served unchanged; one naming more
+/// than one distinct status is refused here, naming the operation and the enum:
+///
+/// ```rust,compile_fail
+/// use tixschema::{model_schema, service_schema};
+///
+/// #[model_schema()]
+/// #[derive(serde::Deserialize, serde::Serialize)]
+/// pub struct WidgetResponse;
+///
+/// #[model_schema()]
+/// #[derive(serde::Deserialize, serde::Serialize)]
+/// #[serde(untagged)]
+/// pub enum WidgetError {
+///     Gone(GoneDetail),
+///     NotFound(NotFoundDetail),
+/// }
+///
+/// #[model_schema()]
+/// #[derive(serde::Deserialize, serde::Serialize)]
+/// pub struct GoneDetail;
+///
+/// #[model_schema()]
+/// #[derive(serde::Deserialize, serde::Serialize)]
+/// pub struct NotFoundDetail;
+///
+/// #[service_schema()]
+/// pub trait WidgetService<Ctx> {
+///     #[service_schema_op(http(
+///         method = "GET",
+///         path = "/widgets/{widget_id}",
+///         error_status(Gone = 410, NotFound = 404),
+///     ))]
+///     async fn get_widget(&self, ctx: &Ctx, widget_id: String) -> Result<WidgetResponse, WidgetError>;
+/// }
+///
+/// fn main() {}
+/// ```
+///
+/// ```text
+/// error: service_schema: operation `get_widget`: `WidgetError` is `#[serde(untagged)]`, so no variant can be read off its value to pick a status
+///        give the enum a tag or map every variant to one status
+/// ```
+fn untagged_multi_status_refusal(
+    operation_ident: &Ident,
+    error_status: &[(Ident, u16)],
+    outcome: &OperationOutcome,
+) -> Option<syn::Error> {
+    let OperationOutcome::Reply {
+        error,
+        success: _success,
+    } = outcome
+    else {
+        return None;
+    };
+    if !is_recorded_untagged_enum(error) {
+        return None;
+    }
+    let mut distinct: Vec<u16> = Vec::new();
+    for (_, code) in error_status {
+        if !distinct.contains(code) {
+            distinct.push(*code);
+        }
+    }
+    if distinct.len() < 2 {
+        return None;
+    }
+    Some(syn::Error::new_spanned(
+        operation_ident,
+        untagged_multi_status_message(operation_ident, &type_leaf_name(error)),
+    ))
+}
+
 fn build_http_binding(
     operation_ident: &Ident,
     operation: &TraitItemFn,
@@ -1648,6 +1764,12 @@ fn build_http_binding(
     }
 
     if let Some(refusal) = body_kind_refusals(&raw, outcome) {
+        refusals = Some(combined(refusals.take(), refusal));
+    }
+
+    if let Some(refusal) =
+        untagged_multi_status_refusal(operation_ident, &raw.error_status, outcome)
+    {
         refusals = Some(combined(refusals.take(), refusal));
     }
 

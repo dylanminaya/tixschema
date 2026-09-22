@@ -33,7 +33,7 @@ just quick
 # or
 cargo test
 
-# Comprehensive test - all 128 feature combinations (run before commits)
+# Comprehensive test - every combination of the plain features (run before a release)
 just test
 
 # Test specific feature combinations
@@ -118,6 +118,14 @@ just ci
    - Example code is inserted into generated `schema_example()` method
    - Compiler validates example code at compile time
 
+7. **Service Schema Accessors** ([features/service_schema.rs](src/features/service_schema.rs))
+   - `ts_http_service()`: the TypeScript route table and request dispatcher for `http_rest`, mirroring the Rust `dispatch`/`ROUTES` pair
+   - `ts_ws_server()`: the TypeScript connection-accepting WebSocket server for Node, wrapping the existing single-socket dispatcher attachment
+   - `dart_definition()`: every Dart type a service publishes -- its messages, fault type, and one sealed `{Service}{Operation}Result` pair per reply operation
+   - `swift_http_client()`/`swift_ws_client()`: the Swift `http_rest` and `ws_rpc` clients -- one method per operation answering `Result<Success, Failure>`, a one-way method throwing the shared `{Service}Refusal`
+   - `kotlin_http_client()`/`kotlin_ws_client()`: the Kotlin `http_rest` and `ws_rpc` clients -- one method per operation answering the sealed `{Service}{Operation}Result`; the WebSocket one also carries the mini server, `attach{Service}WsDispatcher(frames, handlers, onFault)`, and its `share`
+   - The module itself is gated on `serde` alone. `typescript` gates only the `ts_*` accessors (and `zod` narrows further, to the client and dispatcher seam); `dart`, `swift` and `kotlin` each gate their own accessors independently, under `serde` plus that language's own feature -- none of the four needs any of the others on
+
 ### Key Data Structures
 
 **FieldDef** (central type representation):
@@ -158,7 +166,7 @@ argument — an alias, a branded newtype — calls `with_opaque_type_parameters`
 
 ### Feature Flag System
 
-The crate uses 7 optional features for minimal dependencies:
+The crate uses optional features for minimal dependencies:
 
 - `serde`: Enables Serde attribute parsing and field renaming
 - `zod`: Enables Zod schema generation (v4 syntax)
@@ -167,10 +175,12 @@ The crate uses 7 optional features for minimal dependencies:
 - `typescript`: Enables TypeScript type generation
 - `chrono`: Enables chrono date/time type support (`NaiveDate`, `NaiveTime`, `NaiveDateTime`, `DateTime<Tz>`)
 - `dart`: Enables Dart type generation with a JSON codec, and the Dart HTTP client
+- `swift`: Enables Swift type generation with a `Codable` codec
+- `kotlin`: Enables Kotlin type generation with `kotlinx.serialization` annotations. A consuming Kotlin build declares two dependencies: the runtime library `org.jetbrains.kotlinx:kotlinx-serialization-json` and the Kotlin Gradle plugin `kotlin("plugin.serialization")`
 
-**Total combinations tested**: 2^7 = 128 (via `cargo-hack` in CI)
+**Feature sets**: `web` (the default: `serde`, `zod`, `jsonschema`, `typescript`), `mobile` (`serde`, `dart`, `swift`, `kotlin`) and `mongo` (`object_id`, `chrono`). CI tests the powerset of the sets (`just test-sets`); `just test` runs the powerset of the plain features locally
 
-**Default configuration**: `serde`, `zod`, `jsonschema`, `typescript` (the `object_id`, `chrono` and `dart` features are opt-in)
+**Default configuration**: `serde`, `zod`, `jsonschema`, `typescript` (the `object_id`, `chrono`, `dart`, `swift` and `kotlin` features are opt-in)
 
 ## Critical Development Rules
 
@@ -348,7 +358,7 @@ All validation constraints generate checks in **Zod (frontend), JSON Schema, and
 | `literal = 214` | numeric | `z.literal(214)` | `{"type": "number", "const": 214}` | — |
 | `preprocess = ["fn"]` | any | `z.preprocess(fn, ...)` | — | — (Zod-only) |
 | `ts_optional` | `Option<T>` | — | — | — (TypeScript-only) |
-| `as_number` | `DateTime<Tz>` | inline `z.preprocess(..., z.number())` | — | — (TS+Zod) |
+| `as_number` | `DateTime<Tz>` | inline `z.preprocess(..., z.number())` | — | serde `with = chrono::serde::ts_milliseconds` injected |
 | `nullable` | `Option<T>` | `z.union([T, z.null()])`, key required | `anyOf: [T, {"type":"null"}]`, key required | guard: refuses a key-dropping serde attr |
 
 Multiple constraints on one field are combined. Multiple `preprocess` functions nest:
@@ -363,7 +373,7 @@ is always written under `"type": "number"`, never `"integer"`.
 
 `ts_optional` is a bare flag (no value): it renders an `Option<T>` field as the optional TypeScript key `field?: T` instead of the default `field: T | undefined`. Zod and JSON Schema output are unchanged. It is only valid on `Option<T>` fields (non-`Option` is a compile error) and composes with `as = Type`. The member must also have a key for the flag to make optional, and `validate_ts_optional_flag` refuses both positions where it has none, in every build: a positional slot writes no key at all, and one a serde attribute takes off the wire in both directions (`skip`, or `skip_serializing` and `skip_deserializing` together) is described on no surface. An attribute that drops the key one way only (`skip_serializing_if`, `skip_serializing`) leaves the member standing, and the flag still decides its spelling.
 
-`as_number` is a bare flag (no value): it renders a `DateTime<Tz>` field as a `number` (epoch milliseconds) with an inline self-contained Zod coercer, instead of the default native `Date` (`z.coerce.date()`). It is only valid on `DateTime<Tz>` fields (anything else is a compile error) and is honored on a tuple-variant `DateTime<Tz>` enum payload.
+`as_number` is a bare flag (no value): it renders a `DateTime<Tz>` field as a `number` (epoch milliseconds) with an inline self-contained Zod coercer, instead of the default native `Date` (`z.coerce.date()`). It is only valid on `DateTime<Tz>` fields (anything else is a compile error) and is honored on a tuple-variant `DateTime<Tz>` enum payload. With the `serde` feature on, it also injects `#[serde(with = "chrono::serde::ts_milliseconds")]` (`ts_milliseconds_option` for `Option<DateTime<Tz>>`) so Rust writes the same epoch-milliseconds number every other surface describes, unless the field already carries its own `with`/`deserialize_with` — a consumer's own `chrono` dependency needs its `serde` feature enabled for that module to exist.
 
 `nullable` is a bare flag (no value): on an `Option<T>` field it renders `T | null` with the key **required** on TypeScript, Zod and JSON Schema, instead of the default coercing `T | undefined` with the key left optional. It is only valid on `Option<T>` fields (non-`Option` is a compile error), is refused together with `ts_optional` (the two disagree about the key), and composes with `preprocess` — the preprocess wrap goes around the whole nullable union. With the `serde` feature on, it is also refused together with a key-dropping serde attribute (`skip_serializing_if`, `skip_serializing`, `skip`) — the flag declares the key always written, so dropping it would let serde write a payload the generated schema does not admit. The mirror guard, `check_optional_field_serialization`, requires that same attribute on a bare `Option<T>` field carrying no `nullable`.
 
@@ -887,7 +897,7 @@ The CI pipeline ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs:
 1. `cargo build --verbose`
 2. `just check` (cargo check + clippy)
 3. `cargo test --verbose` (basic tests)
-4. `just test` (all 128 feature combinations via cargo-hack)
+4. `just test-sets` (every combination of the `web`, `mobile` and `mongo` feature sets via cargo-hack)
 5. Discord notification with build status
 
 **Before pushing**, run `just ci` locally to replicate the CI pipeline.
@@ -1014,6 +1024,7 @@ tixschema/
 4. **Forgetting to add types to entities enum** → Types not included in generated output
 5. **Using Zod v3** → Generated schemas use v4 syntax and won't work
 6. **Testing without feature combinations** → May break in different feature configurations
+7. **Declaring `u64`/`usize` under `swift` or `kotlin`** → Refused at expansion: neither target has a mapping for an unsigned 64-bit or pointer-sized integer. Use `i64`, or `u32` where the range allows
 
 ## Debugging Tips
 

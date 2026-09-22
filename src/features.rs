@@ -23,12 +23,19 @@ pub mod chrono;
 #[cfg(feature = "dart")]
 pub mod dart;
 
+#[cfg(feature = "swift")]
+pub mod swift;
+
+#[cfg(feature = "kotlin")]
+pub mod kotlin;
+
 /// Module for parsing model_schema_prop attributes
 pub mod model_schema_prop;
 
-// Also gated on `serde`, because `#[service_schema]` is: the emitters this module names live in
-// `crate::service_schema`, which a build without that feature does not have.
-#[cfg(all(feature = "serde", feature = "typescript"))]
+// Gated on `serde`, because `#[service_schema]` is: the emitters this module names live in
+// `crate::service_schema`. Not gated on `typescript`: the module holds every language's
+// accessors, each gated individually.
+#[cfg(feature = "serde")]
 pub mod service_schema;
 
 /// Feature detection utilities.
@@ -62,6 +69,12 @@ impl Features {
         if Self::has_dart() {
             features.push("dart");
         }
+        if Self::has_swift() {
+            features.push("swift");
+        }
+        if Self::has_kotlin() {
+            features.push("kotlin");
+        }
 
         if features.is_empty() {
             features.push("minimal");
@@ -85,6 +98,10 @@ impl Features {
         cfg!(feature = "jsonschema")
     }
 
+    pub const fn has_kotlin() -> bool {
+        cfg!(feature = "kotlin")
+    }
+
     /// Check if `object_id` feature is enabled.
     pub const fn has_object_id() -> bool {
         cfg!(feature = "object_id")
@@ -93,6 +110,10 @@ impl Features {
     /// Check if serde feature is enabled.
     pub const fn has_serde() -> bool {
         cfg!(feature = "serde")
+    }
+
+    pub const fn has_swift() -> bool {
+        cfg!(feature = "swift")
     }
 
     /// Check if typescript feature is enabled.

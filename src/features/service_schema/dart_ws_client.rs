@@ -22,13 +22,14 @@
 //! than a transport, so it composes across services sharing one socket the same way the
 //! `http_rest` Dart client's own structural transport seam does.
 //!
-//! # A caller throws, exactly as the `http_rest` Dart client does
+//! # A caller reads the outcome, exactly as the `http_rest` Dart client does
 //!
-//! A reply operation answers `Future<Success>` and throws `{Named}WsError<Declared>` — the declared
-//! error, or a fault behind `isServiceFault` — instead of returning a result union; a one-way
-//! operation answers `Future<void>` and throws the fault-only `{Named}WsRefusal`. Both exceptions,
-//! and the fault type they carry (`{Named}FaultFields`), are the same shapes
-//! [`super::dart_http_client`] already throws.
+//! A reply operation answers `Future<{Named}{Operation}Result>` — [`super::dart_result`]'s own
+//! sealed pair, the same one `http_rest` answers — and never throws for a declared error or a
+//! fault; a one-way operation still answers `Future<void>` and throws the fault-only
+//! `{Named}WsRefusal`, having no reply arm to carry a fault through. The fault type either arm
+//! carries (`{Named}FaultFields`) is the same shape [`super::dart_http_client`] already answers
+//! with.
 //!
 //! # A decode failure is a failed-validation fault, not an undeserializable-payload one
 //!
@@ -48,13 +49,14 @@
 //! # A handler signals its declared error the same way a caller reads it
 //!
 //! `{Named}Handlers` answers a reply operation with `Future<Success>` and throws the operation's own
-//! declared error to signal it — Dart's idiom for a `Future`, matching every other exception this
-//! module and [`super::dart_http_client`] throw. Anything else a handler throws is unexpected and
-//! reaches `onFault` instead. Whenever the inbound frame carried an id — a caller waiting on a
-//! reply, whether the operation is one-way or not — the attachment answers it: `ok: true, value:
-//! null` once a one-way handler returns, a fault reply for anything that goes wrong before or
-//! during dispatch, so a pending caller is never left hanging.
+//! declared error to signal it — Dart's idiom for a `Future`, the same one `{Named}WsRefusal` still
+//! uses on the calling side. Anything else a handler throws is unexpected and reaches `onFault`
+//! instead. Whenever the inbound frame carried an id — a caller waiting on a reply, whether the
+//! operation is one-way or not — the attachment answers it: `ok: true, value: null` once a
+//! one-way handler returns, a fault reply for anything that goes wrong before or during dispatch,
+//! so a pending caller is never left hanging.
 
+use super::result::result_name;
 use crate::features::dart::dart_typename;
 use crate::field_type::get_field_def;
 use crate::rename_rule::RenameRule;
@@ -74,11 +76,7 @@ const FRAMES_RECORD_TYPE: &str =
 pub fn emit(service: &ServiceDef) -> Vec<String> {
     let named = service.ident.to_string();
     let fn_prefix = RenameRule::CamelCase.apply_to_variant(&named);
-    let mut published = vec![
-        heartbeat_class(&named),
-        transport_class(&named),
-        error_class(&named),
-    ];
+    let mut published = vec![heartbeat_class(&named), transport_class(&named)];
     if has_one_way(service) {
         published.push(refusal_class(&named));
     }
@@ -146,7 +144,7 @@ fn transport_class(named: &str) -> String {
          }}\n\n  \
          final StreamSink<dynamic> _sink;\n  \
          final {named}WsHeartbeat _heartbeat;\n  \
-         final Map<String, Completer<Map<String, dynamic>>> _pending = {{}};\n  \
+         final Map<String, Completer<Map<String, dynamic>?>> _pending = {{}};\n  \
          final StreamController<Map<String, dynamic>> _controller =\n      \
          StreamController<Map<String, dynamic>>.broadcast();\n  \
          late final StreamSubscription<dynamic> _subscription;\n  \
@@ -155,10 +153,10 @@ fn transport_class(named: &str) -> String {
          int _nextId = 1;\n  \
          bool _closed = false;\n\n  \
          /// Sends `operation` with `payload` as a `request` frame and answers with the matching\n  \
-         /// `reply` frame's own fields.\n  \
-         Future<Map<String, dynamic>> request(String operation, Object? payload) {{\n    \
+         /// `reply` frame's own fields, or `null` once the connection closes before one arrives.\n  \
+         Future<Map<String, dynamic>?> request(String operation, Object? payload) {{\n    \
          final id = '${{_nextId++}}';\n    \
-         final completer = Completer<Map<String, dynamic>>();\n    \
+         final completer = Completer<Map<String, dynamic>?>();\n    \
          _pending[id] = completer;\n    \
          send({{\n      \
          'kind': 'request',\n      \
@@ -217,7 +215,7 @@ fn transport_class(named: &str) -> String {
          _pongTimer?.cancel();\n    \
          _subscription.cancel();\n    \
          for (final completer in _pending.values) {{\n      \
-         completer.completeError(StateError('the {named} ws_rpc connection closed'));\n    \
+         completer.complete(null);\n    \
          }}\n    \
          _pending.clear();\n    \
          _controller.close();\n  \
@@ -231,40 +229,17 @@ fn transport_class(named: &str) -> String {
          }});\n  \
          }}\n\n  \
          /// Cancels the subscription and the heartbeat, and settles every pending `request` with\n  \
-         /// an error: the transport-failure fault every waiting `{named}WsClient` method wraps it\n  \
-         /// into.\n  \
+         /// `null` — a value, not an error — which every waiting `{named}WsClient` method reads\n  \
+         /// as the transport-failure fault.\n  \
          void close() => _onClose();\n\
          }}"
     )
 }
 
 // ---------------------------------------------------------------------------------------------
-// The two exceptions a call throws: the declared error or a fault, and (one-way only) a fault
-// with nowhere else to be returned. Identical in shape to `dart_http_client`'s own.
+// The one exception a client still throws: a one-way method's own fault, having no reply arm to
+// carry it through instead. Identical in shape to `dart_http_client`'s own.
 // ---------------------------------------------------------------------------------------------
-
-fn error_class(named: &str) -> String {
-    let fields = fault_fields_typescript_name(named);
-    format!(
-        "/// What a `{named}` `ws_rpc` client throws for a request-and-reply operation: the error\n\
-         /// the operation declared, or a fault it never declared.\n\
-         class {named}WsError<E> implements Exception {{\n  \
-         {named}WsError.declared(E declared)\n    \
-         : error = declared,\n      \
-         fault = null;\n  \
-         {named}WsError.fault({fields} reported)\n    \
-         : error = null,\n      \
-         fault = reported;\n  \
-         final E? error;\n  \
-         final {fields}? fault;\n  \
-         bool get isServiceFault => fault != null;\n  \
-         @override\n  \
-         String toString() => isServiceFault\n      \
-         ? '{named}WsError: service fault ${{fault!.kind}} in `${{fault!.operation}}`: ${{fault!.detail}}'\n      \
-         : '{named}WsError: $error';\n\
-         }}"
-    )
-}
 
 fn refusal_class(named: &str) -> String {
     let fields = fault_fields_typescript_name(named);
@@ -304,20 +279,15 @@ fn client_class(service: &ServiceDef) -> String {
     )
 }
 
-fn return_type(operation: &OperationDef) -> String {
-    match &operation.outcome {
-        OperationOutcome::OneWay => "Future<void>".to_owned(),
-        OperationOutcome::Reply {
-            success,
-            error: _error,
-        } => {
-            if is_unit_type(success) {
-                "Future<void>".to_owned()
-            } else {
-                format!("Future<{}>", dart_type_of(success))
-            }
-        }
+/// A one-way method still answers `Future<void>`; a reply method answers
+/// `Future<{Named}{Op}Result>` — [`super::dart_result`]'s own sealed pair — and never throws for a
+/// declared error or a fault.
+fn return_type(named: &str, operation: &OperationDef) -> String {
+    if matches!(operation.outcome, OperationOutcome::OneWay) {
+        return "Future<void>".to_owned();
     }
+    let result = result_name(named, operation).unwrap();
+    format!("Future<{result}>")
 }
 
 fn client_method(named: &str, operation: &OperationDef) -> String {
@@ -325,7 +295,7 @@ fn client_method(named: &str, operation: &OperationDef) -> String {
     let wire = &operation.wire_name;
     let call = &operation.ts_name;
     let param = message_dart_typename(operation);
-    let returns = return_type(operation);
+    let returns = return_type(named, operation);
     let doc = format!("  /// Calls `{wire}` over `ws_rpc`.");
     match &operation.outcome {
         OperationOutcome::OneWay => format!(
@@ -339,16 +309,22 @@ fn client_method(named: &str, operation: &OperationDef) -> String {
              }}"
         ),
         OperationOutcome::Reply { error, success } => {
+            let result = result_name(named, operation).unwrap();
             let error_ty = dart_type_of(error);
-            let decode = reply_decode_stmt(named, &fn_prefix, wire, &error_ty, success);
+            let decode = reply_decode_stmt(named, &result, &fn_prefix, wire, &error_ty, success);
             format!(
                 "{doc}\n  \
                  {returns} {call}({param} req) async {{\n    \
-                 late final Map<String, dynamic> reply;\n    \
+                 final Map<String, dynamic>? reply;\n    \
                  try {{\n      \
                  reply = await _transport.request('{wire}', req.toJson());\n    \
                  }} catch (uncarried) {{\n      \
-                 throw {named}WsError<{error_ty}>.fault(_{fn_prefix}WsTransportFailure('{wire}', '$uncarried'));\n    \
+                 return {result}Fault(_{fn_prefix}WsTransportFailure('{wire}', '$uncarried'));\n    \
+                 }}\n    \
+                 if (reply == null) {{\n      \
+                 return {result}Fault(\n        \
+                 _{fn_prefix}WsTransportFailure('{wire}', 'the connection closed before a reply arrived'),\n      \
+                 );\n    \
                  }}\n\
 {decode}\
                  }}"
@@ -362,13 +338,14 @@ fn client_method(named: &str, operation: &OperationDef) -> String {
 /// `dart_http_client`'s own `reply_decode_stmt`, over the reply frame rather than a status ladder.
 fn reply_decode_stmt(
     named: &str,
+    result: &str,
     fn_prefix: &str,
     wire: &str,
     error_ty: &str,
     success: &Type,
 ) -> String {
     let fields = fault_fields_typescript_name(named);
-    let success_block = success_decode_block(named, fn_prefix, wire, error_ty, success);
+    let success_block = success_decode_block(result, fn_prefix, wire, success);
     format!(
         "    if (reply['ok'] == true) {{\n{success_block}    }}\n    \
          final error = reply['error'];\n    \
@@ -377,36 +354,30 @@ fn reply_decode_stmt(
          try {{\n        \
          fault = {fields}.fromJson(error['fault'] as Map<String, dynamic>);\n      \
          }} catch (rejected) {{\n        \
-         throw {named}WsError<{error_ty}>.fault(_{fn_prefix}WsFailedValidation('{wire}', '$rejected'));\n      \
+         return {result}Fault(_{fn_prefix}WsFailedValidation('{wire}', '$rejected'));\n      \
          }}\n      \
-         throw {named}WsError<{error_ty}>.fault(fault);\n    \
+         return {result}Fault(fault);\n    \
          }}\n    \
          late final {error_ty} declared;\n    \
          try {{\n      \
          declared = {error_ty}.fromJson(error as Map<String, dynamic>);\n    \
          }} catch (rejected) {{\n      \
-         throw {named}WsError<{error_ty}>.fault(_{fn_prefix}WsFailedValidation('{wire}', '$rejected'));\n    \
+         return {result}Fault(_{fn_prefix}WsFailedValidation('{wire}', '$rejected'));\n    \
          }}\n    \
-         throw {named}WsError<{error_ty}>.declared(declared);\n"
+         return {result}Operation(declared);\n"
     )
 }
 
-fn success_decode_block(
-    named: &str,
-    fn_prefix: &str,
-    wire: &str,
-    error_ty: &str,
-    success: &Type,
-) -> String {
+fn success_decode_block(result: &str, fn_prefix: &str, wire: &str, success: &Type) -> String {
     if is_unit_type(success) {
-        return "      return;\n".to_owned();
+        return format!("      return {result}Ok();\n");
     }
     let success_ty = dart_type_of(success);
     format!(
         "      try {{\n        \
-         return {success_ty}.fromJson(reply['value'] as Map<String, dynamic>);\n      \
+         return {result}Ok({success_ty}.fromJson(reply['value'] as Map<String, dynamic>));\n      \
          }} catch (rejected) {{\n        \
-         throw {named}WsError<{error_ty}>.fault(_{fn_prefix}WsFailedValidation('{wire}', '$rejected'));\n      \
+         return {result}Fault(_{fn_prefix}WsFailedValidation('{wire}', '$rejected'));\n      \
          }}\n"
     )
 }

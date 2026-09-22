@@ -37,7 +37,10 @@ use super::message;
 use super::result::result_name;
 use crate::field_type::get_field_def;
 use crate::rename_rule::RenameRule;
-use crate::service_schema::parse::{OperationDef, OperationOutcome, ServiceDef};
+use crate::service_schema::parse::{
+    HttpShape, OperationDef, OperationOutcome, ServiceDef, option_inner,
+};
+use core::fmt::Write as _;
 
 pub fn emit(service: &ServiceDef) -> Vec<String> {
     let mut published = outcome_types(service);
@@ -47,24 +50,92 @@ pub fn emit(service: &ServiceDef) -> Vec<String> {
     published
 }
 
-/// One arm of the dispatcher's `switch`: parse the payload, then call. The order is the point — an
-/// implementation may assume its message is valid, because an invalid one never reaches it.
+/// One arm of the dispatcher's `switch`: parse the payload, read and decode each bound header and
+/// part, then call. An implementation may assume its message is valid and every bound value
+/// present or `undefined` as declared, because neither ever reaches it otherwise.
 fn arm(service: &ServiceDef, operation: &OperationDef) -> String {
     let wire = &operation.wire_name;
     let call = &operation.ts_name;
     let received = payload_check(service, operation);
+    let shape = HttpShape::of(operation);
+    let (bindings, arg_names) = binding_reads(service, operation, &shape);
+    let mut arguments = vec!["ctx".to_owned(), "received.data".to_owned()];
+    arguments.extend(arg_names);
+    let call_args = arguments.join(", ");
     let answering = match &operation.outcome {
         OperationOutcome::OneWay => {
-            format!("        await impl.{call}(ctx, received.data);\n        return undefined;")
+            format!("        await impl.{call}({call_args});\n        return undefined;")
         }
         OperationOutcome::Reply {
             error: _error,
             success: _success,
         } => {
-            format!("        return impl.{call}(ctx, received.data);")
+            format!("        return impl.{call}({call_args});")
         }
     };
-    format!("      case \"{wire}\": {{\n{received}{answering}\n      }}")
+    format!("      case \"{wire}\": {{\n{received}{bindings}{answering}\n      }}")
+}
+
+/// The statements that look up and decode each `header_in` and `part` binding, refusing through
+/// the same framed fault a bad payload gets where a required one is missing — mirrors the Rust
+/// dispatcher's own `header_in_let`/`multipart_part_let`.
+fn binding_reads(
+    service: &ServiceDef,
+    operation: &OperationDef,
+    shape: &HttpShape,
+) -> (String, Vec<String>) {
+    let named = service.ident.to_string();
+    let prefix = RenameRule::CamelCase.apply_to_variant(&named);
+    let wire = &operation.wire_name;
+    let mut stmt = String::new();
+    let mut bound = Vec::new();
+    for header in &shape.header_in {
+        let name = RenameRule::CamelCase.apply_to_field(&header.parameter.to_string());
+        let text = format!("{name}Text");
+        let lower = header.name.to_lowercase();
+        let _ = writeln!(
+            stmt,
+            "        const {text} = headers.find(([name]) => name.toLowerCase() === \
+             \"{lower}\")?.[1];"
+        );
+        let decode = message::decode_ts_expr(&header.ty, &text, &prefix);
+        if option_inner(&header.ty).is_some() {
+            let _ = writeln!(
+                stmt,
+                "        const {name} = {text} === undefined ? undefined : {decode};"
+            );
+        } else {
+            let _ = write!(
+                stmt,
+                "        if ({text} === undefined) {{\n          \
+                 return {prefix}Framed({prefix}InboundFault(\"{wire}\", [{{ path: \
+                 [\"{header_name}\"], message: \"a required header was not carried\" }}]));\n        \
+                 }}\n",
+                header_name = header.name,
+            );
+            let _ = writeln!(stmt, "        const {name} = {decode};");
+        }
+        bound.push(name);
+    }
+    for part in &shape.multipart_parts {
+        let name = RenameRule::CamelCase.apply_to_field(&part.parameter.to_string());
+        let _ = writeln!(
+            stmt,
+            "        const {name} = parts.find(([name]) => name === \"{part_name}\")?.[1];",
+            part_name = part.name,
+        );
+        let _ = write!(
+            stmt,
+            "        if ({name} === undefined) {{\n          \
+             return {prefix}Framed({prefix}InboundFault(\"{wire}\", [{{ path: \
+             [\"{part_name}\"], message: \"a required multipart part was not carried\" \
+             }}]));\n        \
+             }}\n",
+            part_name = part.name,
+        );
+        bound.push(name);
+    }
+    (stmt, bound)
 }
 
 /// The factory: an implementation in, a dispatch function out. It answers with what the transport
@@ -93,8 +164,10 @@ fn dispatcher(service: &ServiceDef) -> String {
          */\n\
          export function create{named}Dispatcher<Ctx>(\n  \
          impl: {named}Impl<Ctx>,\n\
-         ): (ctx: Ctx, operation: string, payload: unknown) => Promise<unknown> {{\n  \
-         return async (ctx, operation, payload) => {{\n    \
+         ): (ctx: Ctx, operation: string, payload: unknown, headers?: ReadonlyArray<readonly \
+         [string, string]>, parts?: ReadonlyArray<readonly [string, unknown]>) => \
+         Promise<unknown> {{\n  \
+         return async (ctx, operation, payload, headers = [], parts = []) => {{\n    \
          switch (operation) {{\n\
          {arms}\n      \
          default:\n        \
@@ -209,10 +282,10 @@ fn interface(service: &ServiceDef) -> String {
         .iter()
         .map(|operation| {
             format!(
-                "  /** {} */\n  {}(ctx: Ctx, req: {}): Promise<{}>;",
+                "  /** {} */\n  {}({}): Promise<{}>;",
                 method_summary(&named, operation),
                 operation.ts_name,
-                message::typename(operation),
+                interface_method_params(operation),
                 implementation_answers(&named, operation)
             )
         })
@@ -230,11 +303,35 @@ fn interface(service: &ServiceDef) -> String {
          * The context is the implementation's own type, constructed per message by whatever owns \
          the\n \
          * transport. It reaches no message and no schema.\n \
+         *\n \
+         * A bound `header_in` or `part(...)` binding adds one more argument after the message, in\n \
+         * declaration order, named and typed exactly as `create{named}HttpClient`'s own method \
+         takes\n \
+         * it: the dispatcher decodes and refuses it the same way it does the message, so an \
+         argument\n \
+         * an implementation reads here is as trustworthy as `req` is.\n \
          */\n\
          export interface {named}Impl<Ctx> {{\n\
          {methods}\n\
          }}"
     )
+}
+
+/// One method's own parameter list: the context, the message, then one argument per `header_in`
+/// binding and one per `part` binding, in declaration order — the same list
+/// [`super::http_client::method_params`] renders for the client's own method.
+fn interface_method_params(operation: &OperationDef) -> String {
+    let shape = HttpShape::of(operation);
+    let mut params = vec![
+        "ctx: Ctx".to_owned(),
+        format!("req: {}", message::typename(operation)),
+    ];
+    params.extend(
+        message::binding_params(&shape)
+            .into_iter()
+            .map(|(name, ty)| format!("{name}: {ty}")),
+    );
+    params.join(", ")
 }
 
 /// What an implementation's method answers: the two arms the operation declared, and never a

@@ -1289,6 +1289,33 @@ pub enum ExplodeError {
 
 #[model_schema()]
 #[derive(Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", tag = "errorCode")]
+pub enum FlagError {
+    AlreadyFlagged,
+    NotFound,
+}
+
+#[model_schema()]
+#[derive(Deserialize, Serialize)]
+pub struct RetryDetail {
+    pub retry_after: u32,
+}
+
+/// An error whose variants carry data — a struct variant and a tuple (newtype) variant — beside a
+/// unit one, mapped to three distinct statuses in the same `error_status` table.
+#[model_schema()]
+#[derive(Deserialize, Serialize)]
+pub enum VaultError {
+    Gone(RetryDetail),
+    #[serde(rename = "vault-locked")]
+    Locked {
+        retry_after: u32,
+    },
+    NotFound,
+}
+
+#[model_schema()]
+#[derive(Deserialize, Serialize)]
 pub struct SearchDocumentsResult {
     pub matches: Vec<String>,
 }
@@ -1335,6 +1362,19 @@ pub trait DocumentService<Ctx> {
     ))]
     async fn archive_document(&self, ctx: &Ctx, document_id: String) -> Result<(), ArchiveError>;
 
+    /// Every variant of `VaultError` mapped to its own status regardless of shape: a struct
+    /// variant, a tuple variant and a unit variant.
+    #[service_schema_op(http(
+        method = "GET",
+        path = "/documents/{document_id}/vault",
+        error_status(Locked = 423, Gone = 410, NotFound = 404),
+    ))]
+    async fn check_vault(
+        &self,
+        ctx: &Ctx,
+        document_id: String,
+    ) -> Result<CreateDocumentResponse, VaultError>;
+
     #[service_schema_op(http(
         method = "POST",
         path = "/documents",
@@ -1356,6 +1396,29 @@ pub trait DocumentService<Ctx> {
         ctx: &Ctx,
         document_id: String,
     ) -> Result<CreateDocumentResponse, ExplodeError>;
+
+    /// An `http(...)` group naming no `error_status` table at all, on an error type with more
+    /// than one variant.
+    #[service_schema_op(http(method = "GET", path = "/documents/{document_id}/flag"))]
+    async fn flag_document(
+        &self,
+        ctx: &Ctx,
+        document_id: String,
+    ) -> Result<CreateDocumentResponse, FlagError>;
+
+    /// A required (non-`Option`) `header_in`, unlike `get_version`'s optional one — its absence
+    /// must be refused before the header is ever decoded.
+    #[service_schema_op(http(
+        method = "GET",
+        path = "/documents/{document_id}/range",
+        header_in("range" = byte_range),
+    ))]
+    async fn get_document_range(
+        &self,
+        ctx: &Ctx,
+        document_id: String,
+        byte_range: String,
+    ) -> Result<VersionResponse, GetVersionError>;
 
     #[service_schema_op(http(
         method = "GET",
@@ -1414,6 +1477,21 @@ impl DocumentService<()> for DocumentBackEnd {
         Ok(())
     }
 
+    async fn check_vault(
+        &self,
+        _ctx: &(),
+        document_id: String,
+    ) -> Result<CreateDocumentResponse, VaultError> {
+        ready(()).await;
+        self.reach(format!("check_vault {document_id}"));
+        match document_id.as_str() {
+            "locked" => Err(VaultError::Locked { retry_after: 30 }),
+            "gone" => Err(VaultError::Gone(RetryDetail { retry_after: 0 })),
+            "missing" => Err(VaultError::NotFound),
+            _ => Ok(CreateDocumentResponse { document_id }),
+        }
+    }
+
     async fn create_document(
         &self,
         _ctx: &(),
@@ -1438,6 +1516,33 @@ impl DocumentService<()> for DocumentBackEnd {
         self.reach(format!("explode {document_id}"));
         came_apart(&document_id);
         Ok(CreateDocumentResponse { document_id })
+    }
+
+    async fn flag_document(
+        &self,
+        _ctx: &(),
+        document_id: String,
+    ) -> Result<CreateDocumentResponse, FlagError> {
+        ready(()).await;
+        self.reach(format!("flag_document {document_id}"));
+        match document_id.as_str() {
+            "missing" => Err(FlagError::NotFound),
+            "again" => Err(FlagError::AlreadyFlagged),
+            _ => Ok(CreateDocumentResponse { document_id }),
+        }
+    }
+
+    async fn get_document_range(
+        &self,
+        _ctx: &(),
+        document_id: String,
+        byte_range: String,
+    ) -> Result<VersionResponse, GetVersionError> {
+        ready(()).await;
+        self.reach(format!("get_document_range {document_id} {byte_range}"));
+        Ok(VersionResponse {
+            content: format!("{document_id}@{byte_range}"),
+        })
     }
 
     async fn get_thumbnail(
@@ -2143,6 +2248,20 @@ fn an_absent_option_header_in_decodes_as_the_arguments_own_none_rather_than_a_nu
 }
 
 #[test]
+fn an_absent_required_header_in_is_refused_by_name_rather_than_reaching_the_implementation() {
+    let (reached, response) = http_dispatched("GET", "/documents/present/range", "", &[], b"");
+    assert!(
+        reached.is_empty(),
+        "the handler must not run without its required header"
+    );
+    assert_eq!(response.status(), 400);
+    let fault: serde_json::Value = serde_json::from_slice(response.body()).unwrap();
+    assert_eq!(fault["kind"], "failed-validation");
+    assert_eq!(fault["field"], "range");
+    assert_eq!(fault["detail"], "a required header was not carried");
+}
+
+#[test]
 fn a_mapped_error_answers_its_declared_status_with_the_error_enum_as_the_body() {
     let (_not_found_reached, not_found_response) =
         http_dispatched("GET", "/documents/missing/versions/v1", "", &[], b"");
@@ -2321,12 +2440,42 @@ fn a_bytes_operations_declared_error_still_answers_json() {
     assert_eq!(response.body(), br#"{"errorCode":"not-found"}"#);
 }
 
+/// Exactly like an operation naming no `http(...)` group at all.
+#[test]
+fn a_table_less_http_group_answers_every_declared_error_at_the_default_binding_status() {
+    let (reached, not_found) = http_dispatched("GET", "/documents/missing/flag", "", &[], b"");
+    assert_eq!(reached, vec!["flag_document missing".to_owned()]);
+    assert_eq!(not_found.status(), 422);
+    assert_eq!(not_found.body(), br#"{"errorCode":"not-found"}"#);
+
+    let (_reached, already) = http_dispatched("GET", "/documents/again/flag", "", &[], b"");
+    assert_eq!(already.status(), 422);
+    assert_eq!(already.body(), br#"{"errorCode":"already-flagged"}"#);
+}
+
+#[test]
+fn a_struct_variant_and_a_tuple_variant_each_answer_their_own_declared_status() {
+    let (reached, locked) = http_dispatched("GET", "/documents/locked/vault", "", &[], b"");
+    assert_eq!(reached, vec!["check_vault locked".to_owned()]);
+    assert_eq!(locked.status(), 423);
+    assert_eq!(locked.body(), br#"{"vault-locked":{"retry_after":30}}"#);
+
+    let (_gone_reached, gone) = http_dispatched("GET", "/documents/gone/vault", "", &[], b"");
+    assert_eq!(gone.status(), 410);
+    assert_eq!(gone.body(), br#"{"Gone":{"retry_after":0}}"#);
+
+    let (_missing_reached, missing) =
+        http_dispatched("GET", "/documents/missing/vault", "", &[], b"");
+    assert_eq!(missing.status(), 404);
+    assert_eq!(missing.body(), br#""NotFound""#);
+}
+
 /// The route table an adapter iterates to register a handler per operation: one row each, method
 /// and path template as declared (or defaulted), and every status a caller can be answered with.
 #[test]
 fn the_route_table_lists_one_row_per_operation_with_its_own_statuses() {
     let routes = http_rest_transport::ROUTES;
-    assert_eq!(routes.len(), 8, "one row per operation. Got: {:?}", {
+    assert_eq!(routes.len(), 11, "one row per operation. Got: {:?}", {
         routes
             .iter()
             .map(http_rest_transport::Route::operation)

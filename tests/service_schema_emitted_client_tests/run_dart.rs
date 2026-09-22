@@ -7,9 +7,6 @@
 #![cfg(feature = "dart")]
 
 use super::runtime::ran;
-use super::tests::conversation_client_service_schema::{
-    conversation_client_service_fault_fields_dart, conversation_client_service_fault_kind_dart,
-};
 use super::tests::{
     ConversationClientServiceSchema, conversation_id_dart, window_error_dart, window_page_dart,
     window_request_dart,
@@ -46,13 +43,18 @@ class _Recorder implements ConversationClientServiceHttpTransport {
 void main() async {
   final recorder = _Recorder();
   final client = ConversationClientServiceHttpClient(recorder);
-  await client.window(WindowRequest(
+  final outcome = await client.window(WindowRequest(
     conversation_id: '652f1a3b4c5d6e7f8a9b0c1d',
     limit: 10,
   ));
   await client.window(WindowRequest(conversation_id: '652f1a3b4c5d6e7f8a9b0c1d'));
   await client.purgeConversation(ConversationId('652f1a3b4c5d6e7f8a9b0c1d'));
-  print(jsonEncode(recorder.sent));
+  final ok = outcome is ConversationClientServiceWindowResultOk;
+  print(jsonEncode(<String, dynamic>{
+    'sent': recorder.sent,
+    'ok': ok,
+    'items': ok ? (outcome as ConversationClientServiceWindowResultOk).value.items : null,
+  }));
 }
 ";
 
@@ -64,18 +66,84 @@ fn module() -> String {
         window_request_dart::dart_definition(),
         window_page_dart::dart_definition(),
         window_error_dart::dart_definition(),
-        conversation_client_service_fault_fields_dart::dart_definition(),
-        conversation_client_service_fault_kind_dart::dart_definition(),
+        ConversationClientServiceSchema::dart_definition(),
         ConversationClientServiceSchema::dart_http_client(),
         DRIVER.to_owned(),
     ]
     .join("\n\n")
 }
 
-/// The requests the driver recorded, or `None` where no runtime was reachable.
-fn sent() -> Option<Vec<serde_json::Value>> {
+/// What the driver wrote: the requests it recorded, and the outcome of its first `window` call —
+/// `None` where no runtime was reachable.
+fn driven() -> Option<serde_json::Value> {
     let wrote = ran("dart", RUNTIME_VAR, "dart", "client.dart", &module())?;
     Some(serde_json::from_str(wrote.trim()).unwrap())
+}
+
+/// The requests the driver recorded, or `None` where no runtime was reachable.
+fn sent() -> Option<Vec<serde_json::Value>> {
+    driven().map(|written| written["sent"].as_array().unwrap().clone())
+}
+
+#[test]
+fn dart_definition_publishes_the_result_pair_and_no_pair_for_the_one_way_operation() {
+    let written = ConversationClientServiceSchema::dart_definition();
+    assert!(
+        written.contains(
+            "sealed class ConversationClientServiceWindowResult {\n  \
+             const ConversationClientServiceWindowResult();\n}"
+        ),
+        "got: {written}"
+    );
+    assert!(
+        written.contains(
+            "final class ConversationClientServiceWindowResultOk extends \
+             ConversationClientServiceWindowResult {\n  \
+             const ConversationClientServiceWindowResultOk(this.value);\n  \
+             final WindowPage value;\n}"
+        ),
+        "got: {written}"
+    );
+    assert!(
+        written.contains(
+            "final class ConversationClientServiceWindowResultOperation extends \
+             ConversationClientServiceWindowResult {\n  \
+             const ConversationClientServiceWindowResultOperation(this.error);\n  \
+             final WindowError error;\n}"
+        ),
+        "got: {written}"
+    );
+    assert!(
+        written.contains(
+            "final class ConversationClientServiceWindowResultFault extends \
+             ConversationClientServiceWindowResult {\n  \
+             const ConversationClientServiceWindowResultFault(this.fault);\n  \
+             final ConversationClientServiceFaultFields fault;\n}"
+        ),
+        "got: {written}"
+    );
+    assert!(
+        !written.contains("PurgeConversationResult"),
+        "purge_conversation is one-way and declared no reply to join into a pair. Got: {written}"
+    );
+}
+
+#[test]
+fn window_answers_the_ok_result_pair_carrying_the_recorded_items() {
+    let Some(written) = driven() else {
+        return;
+    };
+    assert_eq!(
+        written["ok"], true,
+        "the recorder answers `window`'s own declared `ok_status`, so the client's `Future` \
+         resolves to the pair's `Ok` member rather than `Operation` or `Fault`. Got: {written:#?}"
+    );
+    assert_eq!(
+        written["items"],
+        serde_json::json!([]),
+        "the `Ok` member carries the page the recorder's own canned body decoded into. \
+         Got: {written:#?}"
+    );
 }
 
 #[test]

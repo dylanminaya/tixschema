@@ -23,20 +23,26 @@
 //! as a TypeScript reference nothing declares. [`stream_success_ts_type`] stands in for it instead,
 //! mirroring the Rust and Dart clients' own streamed record.
 
+#[cfg(feature = "typescript")]
 use crate::field_type::get_field_def;
+#[cfg(any(feature = "typescript", feature = "dart", feature = "kotlin"))]
 use crate::rename_rule::RenameRule;
-use crate::service_schema::parse::{
-    BodyKind, HttpShape, OperationDef, OperationOutcome, ServiceDef, tuple_elements,
-};
+#[cfg(feature = "typescript")]
+use crate::service_schema::parse::{BodyKind, HttpShape, ServiceDef, tuple_elements};
+#[cfg(any(feature = "typescript", feature = "dart", feature = "kotlin"))]
+use crate::service_schema::parse::{OperationDef, OperationOutcome};
+#[cfg(feature = "typescript")]
 use syn::Type;
 
 /// The TypeScript record a `body = "stream"` operation's own success answers with: a `contentRange`
 /// left `undefined` at the operation's own `ok_status`, set to the range text at `206`, paired with
 /// the body as the platform's own `ReadableStream<Uint8Array>` — mirrors the Rust client's own
 /// `StreamedAnswer::Full`/`Partial` and the Dart client's own streamed record.
+#[cfg(feature = "typescript")]
 const STREAMED_ANSWER_TS_TYPE: &str =
     "{ contentRange: string | undefined; body: ReadableStream<Uint8Array> }";
 
+#[cfg(feature = "typescript")]
 pub fn emit(service: &ServiceDef) -> Vec<String> {
     let named = service.ident.to_string();
     service
@@ -47,7 +53,10 @@ pub fn emit(service: &ServiceDef) -> Vec<String> {
 }
 
 /// What one operation's result type is called: `get_balance` on `UsageService` answers a
-/// `UsageServiceGetBalanceResult`. `None` for a one-way operation, which answers nothing.
+/// `UsageServiceGetBalanceResult`. `None` for a one-way operation, which answers nothing. Read by
+/// every language that names a sealed result type of its own — TypeScript's `result_type` above
+/// and, once `zod` is also on, the client and dispatcher seams; Dart's and Kotlin's.
+#[cfg(any(feature = "typescript", feature = "dart", feature = "kotlin"))]
 pub fn result_name(service: &str, operation: &OperationDef) -> Option<String> {
     match &operation.outcome {
         OperationOutcome::OneWay => None,
@@ -61,6 +70,7 @@ pub fn result_name(service: &str, operation: &OperationDef) -> Option<String> {
     }
 }
 
+#[cfg(feature = "typescript")]
 fn result_type(service: &str, operation: &OperationDef) -> Option<String> {
     let OperationOutcome::Reply { error, success } = &operation.outcome else {
         return None;
@@ -91,7 +101,8 @@ fn result_type(service: &str, operation: &OperationDef) -> Option<String> {
 /// `stream_success_dart_type`. `success` is read only for the header types after the first slot;
 /// the first slot is always the fixed streamed record; `StreamedAnswer` carries no
 /// `#[model_schema()]` to resolve a TypeScript type from.
-fn stream_success_ts_type(shape: &HttpShape, success: &Type) -> String {
+#[cfg(feature = "typescript")]
+pub fn stream_success_ts_type(shape: &HttpShape, success: &Type) -> String {
     if shape.header_out.is_empty() {
         return STREAMED_ANSWER_TS_TYPE.to_owned();
     }

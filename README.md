@@ -1463,6 +1463,13 @@ service_schema: a service needs tixschema's `serde` feature, and this build does
        add `features = ["serde"]` to the tixschema dependency in Cargo.toml
 ```
 
+**Only the `typescript` feature publishes TypeScript at all.** `<Service>Schema::ts_definition()`
+and every other `ts_*` accessor live behind it, independently of `dart`, `swift` and `kotlin`. A
+build with `serde` and `dart` alone publishes `dart_definition()`, `dart_http_client()` and
+`dart_ws_client()` with no TypeScript in sight, and the reverse holds too — `serde` and `typescript`
+with none of the mobile features publishes TypeScript alone. Each language earns its own accessors
+under `serde` plus that language's own feature; none of the four needs any of the others.
+
 **A service that publishes TypeScript needs the `zod` feature too.** A message validates when it is
 constructed, in both directions: the generated client parses what it is about to send before it
 reaches a transport, and the generated dispatcher parses what arrived before it enters an
@@ -1977,7 +1984,7 @@ export interface UsageServiceImpl<Ctx> {
 ```typescript
 export function createUsageServiceDispatcher<Ctx>(
   impl: UsageServiceImpl<Ctx>,
-): (ctx: Ctx, operation: string, payload: unknown) => Promise<unknown> {
+): (ctx: Ctx, operation: string, payload: unknown, headers?: ReadonlyArray<readonly [string, string]>, parts?: ReadonlyArray<readonly [string, unknown]>) => Promise<unknown> {
 ```
 
 Every member is required, so an implementation missing one is refused where it reaches `createUsageServiceDispatcher`. Every emitted name carries the service -- `UsageServiceFault`, `UsageServiceGetAvailableBalanceResult`, `UsageServiceClient`, and the fault's own brand symbol `usageServiceFaultSeal` -- because TypeScript has no per-service scope and a bundle is one flat file. Rust needs no such prefix, the generated module being the scope TypeScript lacks.
@@ -2201,9 +2208,106 @@ impl<H: FaultHandler + Sync> http_rest_client::Transport for HttpLoop<'_, H> {
 
 A client adapter is the mirror: a small hand-written `Transport` implementation over a real HTTP stack (reqwest in Rust; a service-agnostic `fetch` helper in TypeScript; a service-agnostic `send` implementation in Dart), living with whichever codebase calls the service, doing exactly one job -- carry the plain-terms request across a real connection and hand the plain-terms response back. Timeouts, cancellation, retries, connection handling, mutual TLS and authentication are that adapter's own concerns, never the generated seam's, exactly as `amqp_rpc`'s own adapter split already works: the generator emits the seam, the application implements it against its own libraries, and a workspace that wants to share one adapter across services keeps it in its own crate under its own name -- never a `tixschema`-branded runtime dependency.
 
-**The TypeScript and Dart clients.** `<Service>Schema::ts_http_client()` publishes the `http_rest` half beside `ts_client()`'s AMQP-shaped one: a service-agnostic `{Service}HttpTransport` seam (`send(request): Promise<response>`, both the request and the response carrying `method`/`path`/`query`/`headers`/`body` as plain strings, plus `parts` on the request where the service declares a multipart operation and `bodyStream: ReadableStream<Uint8Array>` on the response where the service declares a streamed operation -- the platform's own stream type, never a naming of `fetch`), the `{Service}HttpClient` interface, and `create{Service}HttpClient(transport)`. It needs the `zod` feature exactly as `ts_client()` and `ts_service()` do -- outbound validation before a byte goes out is what a `safeParse` against the message's own `$Schema` gives it, and a build without Zod cannot write that check truthfully, so it publishes none of the three rather than one without it. `<Service>Schema::dart_http_client()` is the Dart sibling -- the same seam and per-operation client, over the `dart` feature's own generated types and JSON codec rather than Zod, needing no separate outbound check because a Dart message is a real class with `required` constructor parameters and cannot be built malformed in the first place. Where TypeScript answers a reply with an `{ ok, value | error }` union, Dart throws: a reply method answers `Future<Success>` directly and throws `{Service}HttpError<Declared>` (the declared error, or a fault behind `isServiceFault`), and a one-way method answers `Future<void>` and throws the fault-only `{Service}HttpRefusal` -- Dart's own idiom for a `Future`, mirroring exactly how its own one-way AMQP methods already throw.
+**The TypeScript REST server.** `<Service>Schema::ts_http_service()` emits the route table, the plain-terms request and response shapes, a fault handler with the Rust defaults, and `create{Service}HttpDispatcher(impl, onFault?)` -- the TypeScript twin of `ROUTES`, `IncomingRequest`/`OutgoingResponse`, `FaultHandler` and `dispatch` above, doing its own method and path matching, placeholder and query coercion, and message assembly rather than taking an already-matched operation name. It names no framework: the adapter that binds it to a real listener is the hosting application's, exactly as the client adapter above is.
 
-Both language backends cover `body = "json"`, `body = "bytes"`, `body = "stream"` and `body = "multipart"` in full. A streamed operation's TypeScript client answers `{ contentRange: string | undefined; body: ReadableStream<Uint8Array> }` -- `contentRange` left `undefined` at the operation's own `ok_status`, read back off the response ahead of naming the body and set to the range text at `206` -- off the seam's own `bodyStream` field; its Dart client answers the same pairing as a `({String? contentRange, Stream<List<int>> body})` record off `bodyStream` there too. A declared `header_out` composes onto either answer exactly as it does for `json` and `bytes`. A multipart operation's TypeScript client builds `parts` from the message's own fields and the declared `part` bindings; its Dart client builds the same list, the file handles crossing as `dynamic` through the same path an unknown type already renders by.
+Each bound `header_in` and `part(...)` arrives at the TypeScript implementation as its own argument after the message, in declaration order, the way the Rust trait method already receives it -- `create{Service}Dispatcher` looks it up, decodes it and refuses a missing required one through the same framed fault a bad payload gets, before the implementation is ever called, so an argument read there is as trustworthy as the message is. `get_version`'s `byte_range` above reaches its TypeScript implementation this way:
+
+```typescript
+// not compiled here
+export interface DocumentServiceImpl<Ctx> {
+  getVersion(
+    ctx: Ctx,
+    req: GetVersionRequest,
+    byteRange: string | undefined,
+  ): Promise<DocumentServiceGetVersionOutcome>;
+}
+```
+
+The REST server itself keeps no presence check of its own: it passes the request's own `headers` and, on a service with at least one multipart operation, its own `parts` straight through to the dispatcher, exactly as it passes the assembled message.
+
+<!-- read from tests/service_schema_emitted_client_tests/run_node_http_service.rs, the Node `http` adapter driving the emitted dispatcher -->
+```typescript
+const dispatch = createConversationClientServiceHttpDispatcher(impl);
+const server = createServer(async (req, res) => {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const answered = await dispatch(
+    {},
+    {
+      body: new Uint8Array(Buffer.concat(chunks)),
+      headers: Object.entries(req.headers).map(([name, value]) => [name, Array.isArray(value) ? value.join(",") : String(value ?? "")]),
+      method: req.method ?? "GET",
+      path: url.pathname,
+      query: url.search.startsWith("?") ? url.search.slice(1) : url.search,
+    },
+  );
+  res.writeHead(answered.status, Object.fromEntries(answered.headers));
+  res.end(Buffer.from(answered.body));
+});
+```
+
+The same dispatcher runs unchanged behind another web framework -- Express, as a catch-all handler that leaves the matching to the dispatcher:
+
+```typescript
+app.use(express.raw({ limit: "8mb", type: () => true }));
+app.all(/.*/, async (req, res) => {
+  writeResponse(res, await dispatch({ requestId: ++requestCounter }, toRequest(req)));
+});
+```
+
+Run against seven requests -- a matched call, a declared error, a handler that throws, a one-way call, and three that match no route (a wrong path, a wrong method on a known path, an empty placeholder segment) -- both adapters answered identically: 200 with the success value as the bare JSON body, 404 with the declared error's own body, 500 with a `handler-panic` fault, 204 with nothing, and 404 with an `unknown-operation` fault for each of the last three. What decides each status:
+
+| what answers | who decides it |
+| --- | --- |
+| the success status | the operation's own `ok_status`, else 204 for nothing to serialize and 200 otherwise |
+| a declared error's status | `error_status(Variant = code)`, else 422 for an operation that declares no table |
+| a fault's status | 404 unknown route, 400 refused payload, 500 handler threw -- replaceable through the dispatcher's own `onFault` argument |
+
+**The TypeScript, Dart, Swift and Kotlin clients.** `<Service>Schema::ts_http_client()` publishes the `http_rest` half beside `ts_client()`'s AMQP-shaped one: a service-agnostic `{Service}HttpTransport` seam (`send(request): Promise<response>`, both the request and the response carrying `method`/`path`/`query`/`headers`/`body` as plain strings, plus `parts` on the request where the service declares a multipart operation and `bodyStream: ReadableStream<Uint8Array>` on the response where the service declares a streamed operation -- the platform's own stream type, never a naming of `fetch`), the `{Service}HttpClient` interface, and `create{Service}HttpClient(transport)`. It needs the `zod` feature exactly as `ts_client()` and `ts_service()` do -- outbound validation before a byte goes out is what a `safeParse` against the message's own `$Schema` gives it, and a build without Zod cannot write that check truthfully, so it publishes none of the three rather than one without it. `<Service>Schema::dart_http_client()` is the Dart sibling -- the same seam and per-operation client, over the `dart` feature's own generated types and JSON codec rather than Zod, needing no separate outbound check because a Dart message is a real class with `required` constructor parameters and cannot be built malformed in the first place. Where TypeScript answers a reply with an `{ ok, value | error }` union, Dart answers a returned `{Service}{Operation}Result` instead: `<Service>Schema::dart_definition()` publishes every message, fault type and result pair a service needs beside `dart_http_client()`, one sealed class per reply operation carrying three members -- `{Service}{Operation}ResultOk(value)` for the success, `{Service}{Operation}ResultOperation(error)` for the declared error, `{Service}{Operation}ResultFault(fault)` for a fault the operation never declared -- so a reply method answers `Future<{Service}{Operation}Result>` and a caller reads the outcome through an exhaustive `switch` rather than a catch block:
+
+```dart
+// not compiled here
+final result = await client.window(WindowRequest(conversation_id: '652f1a3b4c5d6e7f8a9b0c1d'));
+switch (result) {
+  case ConversationClientServiceWindowResultOk(:final value):
+    print(value.items);
+  case ConversationClientServiceWindowResultOperation(:final error):
+    print('declared: $error');
+  case ConversationClientServiceWindowResultFault(:final fault):
+    print('fault ${fault.kind} in ${fault.operation}');
+}
+```
+
+A one-way method still answers `Future<void>` and throws the fault-only `{Service}HttpRefusal` -- Dart's own idiom for a `Future`, mirroring exactly how its own one-way AMQP methods already throw, and having no reply arm to carry a fault through instead.
+
+`<Service>Schema::swift_http_client()` is the Swift sibling, over the `swift` feature's own generated `Codable` types -- needing no separate outbound check for the same reason Dart needs none, a Swift message being a `Codable` struct with non-optional stored properties for every required field. A reply method answers Swift's own `Result<Success, Failure>` rather than a returned pair, `Failure` being `{Service}{Operation}Failure`, an enum of `.declared(Error)` for the operation's own declared error and `.fault({Service}Fault)` for one it never declared:
+
+```swift
+// adapted from tests/service_schema_emitted_client_tests/run_swift.rs, the http_rest group's own recording transport
+let client = ConversationClientServiceHttpClient(transport: recorder)
+let outcome = await client.window(WindowRequest(conversationId: "652f1a3b4c5d6e7f8a9b0c1d", limit: 10))
+if case .failure(.declared(let error)) = outcome {
+  report(error)
+}
+```
+
+A one-way method still `throws` the fault-only `{Service}Refusal`, shared with `swift_ws_client()`'s own one-way methods rather than named apart from them.
+
+`<Service>Schema::kotlin_http_client()` is the Kotlin sibling, over the `kotlin` feature's own `kotlinx.serialization` types. A reply method answers the same sealed `{Service}{Operation}Result` `kotlin_ws_client()` answers with -- one `sealed interface` per reply operation with `Ok`/`Declared`/`Fault` members, narrowed with `is` exactly as the Dart pair is narrowed with `switch`:
+
+```kotlin
+// adapted from tests/service_schema_emitted_client_tests/run_kotlin.rs, the http_rest group's own recording transport
+val client = ConversationClientServiceHttpClient(transport)
+val outcome = client.window(WindowRequest(conversationId = "652f1a3b4c5d6e7f8a9b0c1d", limit = 10u))
+if (outcome is ConversationClientServiceWindowResult.Declared) {
+  report(outcome.error)
+}
+```
+
+A one-way method still throws the fault-only `{Service}Refusal`.
+
+All four non-Rust backends cover `body = "json"`, `body = "bytes"`, `body = "stream"` and `body = "multipart"` in full. A streamed operation's TypeScript client answers `{ contentRange: string | undefined; body: ReadableStream<Uint8Array> }` -- `contentRange` left `undefined` at the operation's own `ok_status`, read back off the response ahead of naming the body and set to the range text at `206` -- off the seam's own `bodyStream` field; its Dart client answers the same pairing as a `({String? contentRange, Stream<List<int>> body})` record off `bodyStream` there too; its Swift client answers the same pairing as `(contentRange: String?, body: AsyncThrowingStream<Data, Error>)` off `bodyStream` there too; its Kotlin client answers the same pairing wrapped in an aux `{Result}Streamed(contentRange, body: Flow<ByteArray>)` type off `bodyStream` there too. A declared `header_out` composes onto either answer exactly as it does for `json` and `bytes`. A multipart operation's TypeScript client builds `parts` from the message's own fields and the declared `part` bindings; its Dart client builds the same list, the file handles crossing as `dynamic` through the same path an unknown type already renders by; its Swift client builds the same list, the file handles crossing as `any Sendable`; its Kotlin client builds the same list, the file handles crossing as `Any?`.
 
 #### The `ws_rpc` Transport
 
@@ -2396,9 +2500,34 @@ attachProbeServiceWsDispatcher<ProbeContext>(socket, { loggerName: "probe" }, {
 
 Both need the `zod` feature exactly as `ts_client()` and `ts_service()` do -- checking an inbound reply against a declared schema is what a `safeParse` against the message's own `$Schema` gives them, and a build without Zod cannot write that check truthfully, so a build with no Zod surface publishes neither.
 
+**The Node WebSocket server.** `<Service>Schema::ts_ws_server()` publishes `create{Service}WsServer(impl, contextFor, options)`, which accepts connections rather than attaching to one socket somebody else already opened. `accept(socket)` builds a context per connection through the caller's own synchronous `contextFor`, wraps the existing `attach{Service}WsDispatcher` around a write-guarded view of the socket, and returns a `{Service}WsConnection` carrying an `AbortSignal` aborted when the connection closes, a `close()`, and `share(attach)` for handing the same guarded socket and signal to a second service's own attachment:
+
+<!-- read from tests/service_schema_emitted_client_tests/run_node_ws_server.rs, the server accepting connections from the `ws` package -->
+```typescript
+const server = createConversationClientServiceWsServer(
+  impl,
+  (connection) => ({ n: ++n, signal: connection.signal }),
+  { onFault: () => {} },
+);
+const wss = new WebSocketServer({ port: 0 });
+wss.on("connection", (socket) => server.accept(socket));
+```
+
+`options.heartbeat` defaults to the client's own `{ intervalMs: 30_000, timeoutMs: 10_000 }`: the idle timer arms only once no frame of any kind has arrived for `intervalMs`, a `ping` then goes out, and the connection closes if no `pong` answers within `timeoutMs` -- a busy connection is never probed. The accepted-socket type requires an `error` listener the single-socket seam does not carry, because the `ws` package throws an unhandled `error` event out of `emit`; `options.onSocketError` is called, and the connection closed, when one fires. A second service reaches the same socket through the connection's own hook rather than through a second listener:
+
+<!-- read from tests/service_schema_emitted_client_tests/run_node_ws_server.rs, scenario 8 -->
+```typescript
+wss.on("connection", (socket) => {
+  connection = server.accept(socket);
+  connection.share(attachInventoryServiceStub);
+});
+```
+
+Each service answers only the frames naming it, exactly one `pong` answers one `ping` because the accepting server owns the heartbeat, and `share` throws once the connection has closed.
+
 **The Dart client.** `<Service>Schema::dart_ws_client()` is the Dart sibling, over the `dart` feature's own generated types and JSON codec rather than Zod -- needing no separate outbound check, a Dart message being a real class with `required` constructor parameters that cannot be built malformed in the first place. `{Service}WsTransport` takes the sink and stream a `WebSocketChannel` already exposes (`StreamSink<dynamic>`/`Stream<dynamic>`) rather than naming `web_socket_channel` or `dart:io` itself, plus an optional `{Service}WsHeartbeat` (`{Service}WsHeartbeat.off()` turning liveness checking off, the same thing `heartbeat: false` does in TypeScript). `WebSocketChannel.stream` is single-subscription, so the transport is the only thing that ever calls `.listen` on it; an attachment for a second, browser-implemented service sharing the same connection reaches the transport's own `frames` instead -- a record pairing `inbound` (every frame the transport did not itself correlate to a pending request) with `send`, structurally identical for every service, so `attach{Service}WsDispatcher` composes over it without naming the calling service's transport class at all.
 
-`{Service}WsClient` throws rather than returning a union, exactly as `dart_http_client()` already does: a reply method answers `Future<Success>` and throws `{Service}WsError<Declared>` (the declared error, or a fault behind `isServiceFault`); a one-way method answers `Future<void>` and throws the fault-only `{Service}WsRefusal`. A reply that will not decode is `failedValidation` rather than `undeserializablePayload` -- `ws_rpc` has no status line to draw that distinction with, so a reply failing the check the transport was always going to make against the declared type reads the same as any other failed validation. `{Service}Handlers` carries one handler per declared operation, and `attach{Service}WsDispatcher(frames, ctx, handlers, onFault: ...)` is the dispatcher attachment's own mirror: a decode failure, an unknown operation, or a handler throwing anything but its own declared error reaches `onFault` rather than vanishing, and a request left waiting on any of them is answered with the fault instead of hanging.
+`{Service}WsClient` answers a returned `{Service}{Operation}Result` rather than throwing, exactly as `dart_http_client()` now does: a reply method answers `Future<{Service}{Operation}Result>` from the same sealed pair `<Service>Schema::dart_definition()` publishes, its `Ok`/`Operation`/`Fault` members carrying the success, the declared error and an undeclared fault respectively. A one-way method still answers `Future<void>` and throws the fault-only `{Service}WsRefusal`, having no reply arm to carry a fault through. A reply that will not decode answers the pair's `Fault` member carrying `failedValidation` rather than `undeserializablePayload` -- `ws_rpc` has no status line to draw that distinction with, so a reply failing the check the transport was always going to make against the declared type reads the same as any other failed validation. `{Service}Handlers` carries one handler per declared operation, and `attach{Service}WsDispatcher(frames, ctx, handlers, onFault: ...)` is the dispatcher attachment's own mirror: a decode failure, an unknown operation, or a handler throwing anything but its own declared error reaches `onFault` rather than vanishing, and a request left waiting on any of them is answered with the fault instead of hanging.
 
 ```dart
 // not compiled here
@@ -2416,6 +2545,33 @@ attachLedgerEventsWsDispatcher(
   ),
   onFault: (fault) => report(fault),
 );
+```
+
+**The Swift client.** `<Service>Schema::swift_ws_client()` is the Swift sibling: `{Service}WsTransport(socket:, options:)` is an `actor` that owns the socket -- a `{Service}WsSocket` protocol of four members (`send`, `close`, `onMessage`, `onClose`), none naming a networking type, so an app's own `URLSessionWebSocketTask` wrapper satisfies it without an adapter -- correlates a `request` to its reply, answers an inbound `ping` with one `pong`, and runs its own heartbeat (`options.heartbeat` defaulting to `.init(intervalMs: 30_000, timeoutMs: 10_000)`, `nil` turning it off). A reply method answers `Result<Success, Failure>` exactly as `swift_http_client()`'s own methods do, rather than a `{Service}{Operation}Result` pair -- Swift's own `Result` already carries the two arms. `{Service}WsClient` is a `typealias` of `{Service}WsTransport`, so a caller constructs one and calls its methods directly, mirroring `{Service}HttpClient`'s own shape rather than wrapping a second object around it. A one-way method still `throws` the shared `{Service}Refusal`, having no reply arm to carry a fault through.
+
+```swift
+// adapted from tests/service_schema_emitted_client_tests/run_swift.rs, the ws_rpc group's own driver
+let transport = ConversationClientServiceWsTransport(socket: socket, options: .init(heartbeat: nil))
+let outcome = await transport.window(WindowRequest(conversationId: "652f1a3b4c5d6e7f8a9b0c1d", limit: nil))
+if case .failure(.fault(let fault)) = outcome {
+  report(fault)
+}
+```
+
+**The Kotlin client and mini server.** `<Service>Schema::kotlin_ws_client()` publishes `{Service}WsTransport(socket, options)` under the same preferred ownership shape: it correlates a `request` to its reply through a `CompletableDeferred`, answers an inbound `ping` with one `pong`, and runs its own heartbeat on a `CoroutineScope` it owns -- closing the transport cancels that scope, and with it every dispatcher reading the transport's own `frames`. `{Service}WsClient(transport)` wraps it and answers a reply method with the same sealed `{Service}{Operation}Result` `kotlin_http_client()` publishes; a one-way method still throws the fault-only `{Service}WsRefusal`, having no reply arm to carry a fault through.
+
+Kotlin is the one target that also emits a server-side surface for this transport: `{Service}WsFrames` (`inbound`, `send`, `scope`) is the structural seam `attach{Service}WsDispatcher(frames, handlers, onFault)` -- the mini server -- dispatches over rather than the socket itself, so a second service sharing the same connection reaches the same frames without naming the first service's transport class at all. The attachment's own `share(attach)` hands a second service's `attach*WsDispatcher` the transport's `send` and `scope`, and `detach()` tears down every service it shared the socket with along with itself:
+
+```kotlin
+// adapted from tests/service_schema_emitted_client_tests/run_kotlin.rs, the mini-server group's own driver
+val serverTransport = ConversationClientServiceWsTransport(serverSocket, ConversationClientServiceWsOptions(heartbeat = null))
+val attachment = attachConversationClientServiceWsDispatcher(serverTransport.frames, Handlers, onFault = { faults.add(it) })
+
+attachment.share { send, scope ->
+    val pulseFrames = PulseClientServiceWsFrames(serverTransport.frames.inbound, send, scope)
+    attachPulseClientServiceWsDispatcher(pulseFrames, PulseHandlers, onFault = {})
+    ({ pulseDetachRan = true })
+}
 ```
 
 **What a developer types.** Five seats share the pair declared above, each typing only what its own role needs:
@@ -3111,6 +3267,29 @@ Key details:
 - Supports ObjectIds in arrays, HashMaps, optional fields, and deeply nested structures.
 - The MongoDB crate is a dev-dependency only -- zero production overhead.
 
+Every non-Rust target treats `ObjectId` as a bare reference rather than publishing it -- `ts_definition()` writes `ObjectId` unresolved (see "Missing TypeScript Types" below), and `dart_definition()`, `swift_definition()` and `kotlin_definition()` do the same. The consuming project supplies a one-line type in its own language matching the `{ "$oid": "hex_string" }` wire form:
+
+```dart
+class ObjectId {
+  final String oid;
+  ObjectId(this.oid);
+  factory ObjectId.fromJson(Map<String, dynamic> json) => ObjectId(json['\$oid'] as String);
+  Map<String, dynamic> toJson() => {'\$oid': oid};
+}
+```
+
+```swift
+struct ObjectId: Codable {
+  let oid: String
+  enum CodingKeys: String, CodingKey { case oid = "$oid" }
+}
+```
+
+```kotlin
+@Serializable
+data class ObjectId(@SerialName("\$oid") val oid: String)
+```
+
 ## Chrono Date/Time Types
 
 Enable the `chrono` feature for chrono date/time type support. All chrono types map to `string` in TypeScript, with appropriate Zod validation for the specific date/time format.
@@ -3118,6 +3297,8 @@ Enable the `chrono` feature for chrono date/time type support. All chrono types 
 ```toml
 tixschema = { features = ["chrono"] }
 ```
+
+A consumer enabling `chrono` on tixschema must also enable `serde` on its own `chrono` dependency — `as_number` (below) injects a `chrono::serde::ts_milliseconds` hook that only exists there.
 
 Supported types and mappings:
 
@@ -3130,6 +3311,8 @@ Supported types and mappings:
 | `DateTime<Tz>` + `#[model_schema_prop(as_number)]` | `number` | `z.preprocess(<epoch arrow>, z.number())` | `"date-time"` |
 
 `DateTime<Tz>` renders as a native TypeScript `Date` (`z.coerce.date()`) by default, which is what MongoDB needs to expire a BSON `Date` via TTL. The bare `as_number` flag opts a single `DateTime<Tz>` field into an epoch-milliseconds `number` instead, validated by a self-contained inline coercer (no imported helper). `as_number` is only valid on a `DateTime<Tz>` field — using it elsewhere is a compile error.
+
+On the Rust side, `as_number` also injects `#[serde(with = "chrono::serde::ts_milliseconds")]` (or `ts_milliseconds_option` for an `Option<DateTime<Tz>>`), so the field serializes to, and deserializes from, the same epoch-milliseconds number every surface describes — no hand-written serde attribute needed. Where the field already carries its own `with` or `deserialize_with`, the injection is held back and the author's hook runs instead.
 
 `NaiveTime` stays a TypeScript `string`, but its Zod schema also accepts millis-since-start-of-day, converting them to an `HH:MM:SS` string before validation.
 
@@ -3197,6 +3380,9 @@ The crate uses optional features to control code generation and dependencies. Al
 | `typescript` | Yes | TypeScript type generation via `ts_definition()` method |
 | `object_id` | No | MongoDB ObjectId type support with validation |
 | `chrono` | No | Chrono date/time type support (`NaiveDate`, `NaiveTime`, `NaiveDateTime`, `DateTime<Tz>`) |
+| `dart` | No | Dart type generation via `dart_definition()`, with a JSON `fromJson`/`toJson` codec |
+| `swift` | No | Swift type generation with a `Codable` codec |
+| `kotlin` | No | Kotlin type generation via `kotlin_definition()`, with `kotlinx.serialization` annotations. A consuming Kotlin build declares two runtime dependencies the emitted code names -- `org.jetbrains.kotlinx:kotlinx-serialization-json` for the JSON codec and `org.jetbrains.kotlinx:kotlinx-coroutines-core` for the transport's own reply correlation and heartbeat -- plus the Kotlin Gradle plugin `kotlin("plugin.serialization")` |
 
 Common configurations:
 
@@ -3205,7 +3391,7 @@ Common configurations:
 tixschema = "0.1.0"
 
 # All features including optional ones
-tixschema = { features = ["serde", "zod", "jsonschema", "typescript", "object_id", "chrono"] }
+tixschema = { features = ["serde", "zod", "jsonschema", "typescript", "object_id", "chrono", "dart", "swift", "kotlin"] }
 
 # Minimal (TypeScript only, no Zod or JSON Schema)
 tixschema = { default-features = false, features = ["typescript"] }
@@ -3214,7 +3400,7 @@ tixschema = { default-features = false, features = ["typescript"] }
 tixschema = { default-features = false, features = ["serde", "zod", "typescript"] }
 ```
 
-All 2^6 = 64 feature combinations are tested in CI via `cargo-hack`.
+CI tests every combination of the feature sets (`web`, `mobile`, `mongo`) via `cargo-hack`; `just test` runs every combination of the plain features locally.
 
 ## Generating TypeScript Files
 

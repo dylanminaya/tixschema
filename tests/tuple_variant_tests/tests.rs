@@ -508,11 +508,14 @@ fn test_mixed_variants_typescript() {
     }
 
     let ts = Mixed::ts_definition();
+    // The `$Variant` reader appended after the type intentionally spells `case "Empty":`, so the
+    // no-key check below is scoped to the type declaration alone.
+    let type_declaration = ts.split("\n\n").next().unwrap();
 
     // Unit variant is the bare name: serde writes no key for it.
     assert!(ts.contains("\"Empty\""), "Missing Empty. Got: {ts}");
     assert!(
-        !ts.contains("\"Empty\":"),
+        !type_declaration.contains("\"Empty\":"),
         "A unit variant carries no key. Got: {ts}"
     );
 
@@ -990,6 +993,9 @@ fn test_fixed_value_ext_comprehensive() {
     }
 
     let ts = FixedValueExt::ts_definition();
+    // The `$Variant` reader appended after the type intentionally spells `case "SingleValue":`,
+    // so the no-key check below is scoped to the type declaration alone.
+    let type_declaration = ts.split("\n\n").next().unwrap();
 
     assert!(
         ts.contains("\"Alphanumeric\": string"),
@@ -1012,7 +1018,7 @@ fn test_fixed_value_ext_comprehensive() {
         "Missing SingleValue. Got: {ts}"
     );
     assert!(
-        !ts.contains("\"SingleValue\":"),
+        !type_declaration.contains("\"SingleValue\":"),
         "A unit variant carries no key. Got: {ts}"
     );
 
@@ -1036,6 +1042,9 @@ fn test_empty_tuple_variant() {
     }
 
     let ts = EmptyTuple::ts_definition();
+    // The `$Variant` reader appended after the type intentionally spells `case "Unit":`, so the
+    // no-key check below is scoped to the type declaration alone.
+    let type_declaration = ts.split("\n\n").next().unwrap();
 
     assert!(
         ts.contains("\"Normal\": string"),
@@ -1043,7 +1052,7 @@ fn test_empty_tuple_variant() {
     );
     assert!(ts.contains("\"Unit\""), "Missing Unit. Got: {ts}");
     assert!(
-        !ts.contains("\"Unit\":"),
+        !type_declaration.contains("\"Unit\":"),
         "A unit variant carries no key. Got: {ts}"
     );
 }
@@ -1058,7 +1067,7 @@ fn test_optional_tuple_variant_element_json_schema_null_flavor() {
     #[model_schema()]
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub enum Row {
-        Link(Option<String>, Vec<usize>, String, Option<String>),
+        Link(Option<String>, Vec<isize>, String, Option<String>),
     }
 
     let variant = external_member(&Row::json_schema(), "Link");
@@ -1397,6 +1406,9 @@ fn test_attribute_less_enum_writes_the_externally_tagged_form() {
 #[test]
 fn test_attribute_less_enum_typescript_is_the_externally_tagged_union() {
     let ts = External::ts_definition();
+    // The `$Variant` reader appended after the type intentionally spells `case "Bare":`, so the
+    // no-key check below is scoped to the type declaration alone.
+    let type_declaration = ts.split("\n\n").next().unwrap();
 
     assert!(
         ts.contains("\"Pair\": [number, number]"),
@@ -1412,12 +1424,29 @@ fn test_attribute_less_enum_typescript_is_the_externally_tagged_union() {
     );
     assert!(ts.contains("\"Bare\""), "Missing Bare. Got: {ts}");
     assert!(
-        !ts.contains("\"Bare\":"),
+        !type_declaration.contains("\"Bare\":"),
         "A unit variant carries no key. Got: {ts}"
     );
     assert!(
         !ts.contains("type: \"Pair\""),
         "Nothing writes a tag beside the content. Got: {ts}"
+    );
+}
+
+/// Test 19a2: the externally tagged reader reads the sole key, or the bare string for a unit variant.
+#[test]
+#[cfg(feature = "typescript")]
+fn test_attribute_less_enum_variant_reader_reads_the_sole_key_or_the_bare_string() {
+    let ts = External::ts_definition();
+
+    assert!(
+        ts.contains("export function External$Variant(value: unknown): string {"),
+        "Got: {ts}"
+    );
+    assert!(ts.contains("case \"Pair\": return \"Pair\";"), "Got: {ts}");
+    assert!(
+        ts.contains("case \"Bare\": return \"Bare\";"),
+        "the unit variant's own bare string is a case label too. Got: {ts}"
     );
 }
 
@@ -1588,6 +1617,25 @@ fn test_explicitly_tagged_twin_keeps_the_adjacent_form() {
     assert!(ts.contains("a: string"), "Got: {ts}");
 }
 
+/// Test 19f: the adjacent reader reads the tag key only, whatever the content key beside it holds.
+#[test]
+#[cfg(feature = "typescript")]
+fn test_adjacent_variant_reader_reads_the_tag_key_and_ignores_the_content_key() {
+    let ts = Adjacent::ts_definition();
+
+    assert!(
+        ts.contains("export function Adjacent$Variant(value: unknown): string {"),
+        "Got: {ts}"
+    );
+    assert!(
+        ts.contains("switch ((value as { type?: unknown }).type) {"),
+        "reads the tag key alone. Got: {ts}"
+    );
+    assert!(!ts.contains("value?: unknown"), "Got: {ts}");
+    assert!(ts.contains("case \"Pair\": return \"Pair\";"), "Got: {ts}");
+    assert!(ts.contains("case \"Bare\": return \"Bare\";"), "Got: {ts}");
+}
+
 /// Test 20: what serde writes for a renamed variant, and the keys the surfaces carry for it. The
 /// key is quoted because a rename can spell it as something no bare identifier can hold.
 #[test]
@@ -1632,6 +1680,25 @@ fn test_renamed_variant_key_is_the_wire_name_in_zod() {
     );
     assert!(zod.contains("\"bigThing\": z.number().int()"), "Got: {zod}");
     assert!(zod.contains("z.literal(\"unitThing\")"), "Got: {zod}");
+}
+
+#[test]
+#[cfg(feature = "typescript")]
+fn test_renamed_variant_key_reader_inverts_the_rename_and_the_rename_all() {
+    let ts = RenamedExternal::ts_definition();
+
+    assert!(
+        ts.contains("case \"application/pdf\": return \"Mime\";"),
+        "the variant's own rename inverts. Got: {ts}"
+    );
+    assert!(
+        ts.contains("case \"bigThing\": return \"BigThing\";"),
+        "the container's rename_all inverts. Got: {ts}"
+    );
+    assert!(
+        ts.contains("case \"unitThing\": return \"UnitThing\";"),
+        "Got: {ts}"
+    );
 }
 
 /// Test 20b: and the JSON schema names the same keys, required and closed.
@@ -1758,13 +1825,16 @@ fn test_bare_tag_newtype_over_a_scalar_is_unserializable() {
 #[test]
 fn test_bare_tag_typescript_spreads_the_inner_type_beside_the_tag() {
     let ts = Internal::ts_definition();
+    // The `$Variant` reader appended after the type takes a `value: unknown` parameter, so the
+    // no-content-key check below is scoped to the type declaration alone.
+    let type_declaration = ts.split("\n\n").next().unwrap();
 
     assert!(
         ts.contains("type: \"Wrapped\";\n} & TagPayload"),
         "The inner type joins the tag's object. Got: {ts}"
     );
     assert!(
-        !ts.contains("value:"),
+        !type_declaration.contains("value:"),
         "Nothing writes a content key under a bare tag. Got: {ts}"
     );
     assert!(ts.contains("type: \"Fields\";"), "Got: {ts}");
@@ -2200,11 +2270,14 @@ fn test_serde_writes_a_dropped_lone_slot_as_the_tag_alone_under_a_bare_tag() {
 #[test]
 fn test_a_dropped_variant_slot_leaves_the_described_tuple_in_typescript() {
     let ts = ExternalDroppedSlots::ts_definition();
+    // The `$Variant` reader appended after the type intentionally spells `case "Lone":`, so the
+    // no-key check below is scoped to the type declaration alone.
+    let type_declaration = ts.split("\n\n").next().unwrap();
     assert!(ts.contains("\"Lead\": [number];"), "Got: {ts}");
     assert!(ts.contains("\"Trailing\": [string];"), "Got: {ts}");
     assert!(ts.contains("\"Middle\": [string, number];"), "Got: {ts}");
     assert!(ts.contains("\"Every\": [];"), "Got: {ts}");
-    assert!(!ts.contains("\"Lone\":"), "Got: {ts}");
+    assert!(!type_declaration.contains("\"Lone\":"), "Got: {ts}");
 }
 
 /// The lone slot gone leaves the variant describing as the bare name serde writes, which is the
@@ -2213,8 +2286,11 @@ fn test_a_dropped_variant_slot_leaves_the_described_tuple_in_typescript() {
 #[test]
 fn test_a_variant_whose_lone_slot_is_dropped_describes_as_its_name_in_typescript() {
     let ts = ExternalDroppedSlots::ts_definition();
+    // The `$Variant` reader appended after the type intentionally spells `case "Lone":`, so the
+    // no-key check below is scoped to the type declaration alone.
+    let type_declaration = ts.split("\n\n").next().unwrap();
     assert!(ts.contains("\"Lone\""), "Got: {ts}");
-    assert!(!ts.contains("\"Lone\":"), "Got: {ts}");
+    assert!(!type_declaration.contains("\"Lone\":"), "Got: {ts}");
 }
 
 /// The same shrink on the Zod surface, where the arity is the tuple's own member list.
@@ -2352,7 +2428,11 @@ fn test_a_variant_carrying_no_dropped_slot_describes_unchanged_in_typescript() {
             AdjacentKeptOnly::ts_definition(),
         ),
     ] {
-        let member = kept
+        // Scoped to the type declaration alone: the `$Variant` reader appended after it on both
+        // sides also opens and closes braces, which would throw off `rsplit_once` below.
+        let dropped_type = dropped.split("\n\n").next().unwrap();
+        let kept_type = kept.split("\n\n").next().unwrap();
+        let member = kept_type
             .rsplit_once('{')
             .unwrap()
             .1
@@ -2361,7 +2441,7 @@ fn test_a_variant_carrying_no_dropped_slot_describes_unchanged_in_typescript() {
             .0
             .to_owned();
         assert!(
-            dropped.contains(&member),
+            dropped_type.contains(&member),
             "Missing:\n{member}\nGot:\n{dropped}"
         );
     }

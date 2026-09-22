@@ -265,7 +265,7 @@ mod the_bundle_one_registration_line_produces {
             written
                 .matches("| { isServiceFault: true; fault: ProbeServiceFault } };")
                 .count(),
-            4,
+            5,
             "every operation that answers can answer with a fault. Got: {written}"
         );
     }
@@ -515,9 +515,14 @@ mod the_bundle_one_registration_line_produces {
             let Some((taken, answered)) = line.split_once("): Promise<") else {
                 continue;
             };
-            let Some((_, message)) = taken.split_once("req: ") else {
+            let Some((_, after_req)) = taken.split_once("req: ") else {
                 continue;
             };
+            // The message's own type ends at the first comma (a bound header or part follows)
+            // or at the end where there is none.
+            let message = after_req
+                .split_once(',')
+                .map_or(after_req, |(head, _)| head);
             reached.push(message.to_owned());
             let named = answered.trim_end_matches(';').trim_end_matches('>');
             if named != "void" {
@@ -908,7 +913,7 @@ mod the_envelope_typescript_declares_is_the_one_rust_writes {
     #[test]
     fn every_operation_the_typescript_dispatcher_answers_to_is_one_the_rust_one_answers_to() {
         let named = typescript_operation_names();
-        assert_eq!(named.len(), 5, "got: {named:?}");
+        assert_eq!(named.len(), 6, "got: {named:?}");
         for operation in &named {
             let settled = settlements(operation, b"{}");
             let unknown = settled.iter().any(|encoded| {
@@ -986,6 +991,7 @@ mod the_envelope_typescript_declares_is_the_one_rust_writes {
         assert!(faulted(poll_once(client.get_balance(request())).unwrap()).is_some());
         assert!(faulted(poll_once(client.settle(request())).unwrap()).is_some());
         assert!(faulted(poll_once(client.sweep()).unwrap()).is_some());
+        assert!(faulted(poll_once(client.probe_header("probe".to_owned())).unwrap()).is_some());
         assert!(
             faulted(poll_once(client.expire_credit("acme".to_owned(), "cr-1".to_owned())).unwrap())
                 .is_some()
@@ -1177,6 +1183,21 @@ pub trait ProbeService<Ctx> {
         req: BalanceRequest,
     ) -> Result<BalanceResponse, ProbeError>;
 
+    /// A `header_in` binding: the implementation reaches for one more argument after the
+    /// message, the way the Rust trait method already does — read only by `type_check`'s own
+    /// bundle, which is where the argument's own presence on the generated TypeScript is proven.
+    #[service_schema_op(http(
+        method = "GET",
+        path = "/probe/header",
+        header_in("x-probe" = probe_tag),
+        error_status(DbError = 500, InsufficientBalance = 402),
+    ))]
+    async fn probe_header(
+        &self,
+        ctx: &Ctx,
+        probe_tag: String,
+    ) -> Result<BalanceResponse, ProbeError>;
+
     /// A fourth operation that answers, so the fault reaches four failure arms rather than three.
     async fn settle(
         &self,
@@ -1280,6 +1301,17 @@ impl ProbeService<ProbeContext> for ProbeBackEnd {
         })
     }
 
+    async fn probe_header(
+        &self,
+        ctx: &ProbeContext,
+        probe_tag: String,
+    ) -> Result<BalanceResponse, ProbeError> {
+        let seen = ready(ctx.logger_name.len() + probe_tag.len()).await;
+        Ok(BalanceResponse {
+            credits: u32::try_from(seen).unwrap_or(0),
+        })
+    }
+
     async fn settle(
         &self,
         ctx: &ProbeContext,
@@ -1346,6 +1378,9 @@ fn the_service_is_still_implementable_and_callable_alongside_its_published_types
     ))
     .unwrap();
     assert_eq!(answered.unwrap().credits, 14);
+
+    let probed = poll_once(service.probe_header(&ctx, "probe".to_owned())).unwrap();
+    assert_eq!(probed.unwrap().credits, 10);
 
     let refused = poll_once(service.expire_credit(
         &ProbeContext {

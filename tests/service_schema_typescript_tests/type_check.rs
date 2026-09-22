@@ -103,6 +103,7 @@ const IMPLEMENTATION_HEAD: &str = r#"import {
   createProbeServiceDispatcher,
   type ProbeServiceExpireCreditOutcome,
   type ProbeServiceGetBalanceOutcome,
+  type ProbeServiceProbeHeaderOutcome,
   type ProbeServiceSettleOutcome,
   type ProbeServiceSweepOutcome,
 } from "./bundle";
@@ -119,7 +120,7 @@ const IMPLEMENTATION_TAIL: &str = "});\n";
 /// [`OMITTED`] dropped and nothing else changed, so the two files differ by exactly one member and
 /// a slip in either is a slip in both.
 #[cfg(feature = "zod")]
-const IMPLEMENTATION_MEMBERS: [(&str, &str); 5] = [
+const IMPLEMENTATION_MEMBERS: [(&str, &str); 6] = [
     (
         "applyBundle",
         "  async applyBundle(ctx, req): Promise<void> {
@@ -158,6 +159,15 @@ const IMPLEMENTATION_MEMBERS: [(&str, &str); 5] = [
     return { ok: false, error: { errorCode: "db-error" } };
   },
 "#,
+    ),
+    (
+        "probeHeader",
+        "  async probeHeader(ctx, req, probeTag): Promise<ProbeServiceProbeHeaderOutcome> {
+    void req;
+    void `${ctx.loggerName}:${probeTag}`;
+    return { ok: true, value: { credits: probeTag.length } };
+  },
+",
     ),
 ];
 
@@ -224,6 +234,7 @@ const ATTACHMENT_HEAD: &str = r#"import {
   type ProbeServiceExpireCreditOutcome,
   type ProbeServiceFaultKind,
   type ProbeServiceGetBalanceOutcome,
+  type ProbeServiceProbeHeaderOutcome,
   type ProbeServiceSettleOutcome,
   type ProbeServiceSweepOutcome,
 } from "./bundle";
@@ -241,6 +252,36 @@ const ATTACHMENT_TAIL: &str = "}, (fault) => {
   void kind;
 });
 ";
+
+/// Everything above the HTTP implementation's members: the same [`IMPLEMENTATION_MEMBERS`] the
+/// bare factory and the `ws_rpc` attachment are checked with, reaching
+/// `createProbeServiceHttpDispatcher` instead.
+#[cfg(feature = "zod")]
+const HTTP_IMPLEMENTATION_HEAD: &str = r#"import {
+  createProbeServiceHttpDispatcher,
+  type ProbeServiceExpireCreditOutcome,
+  type ProbeServiceGetBalanceOutcome,
+  type ProbeServiceHttpRequest,
+  type ProbeServiceProbeHeaderOutcome,
+  type ProbeServiceSettleOutcome,
+  type ProbeServiceSweepOutcome,
+} from "./bundle";
+
+type ProbeContext = { loggerName: string };
+
+const dispatch = createProbeServiceHttpDispatcher<ProbeContext>({
+"#;
+
+#[cfg(feature = "zod")]
+const HTTP_IMPLEMENTATION_TAIL: &str = r#"});
+
+declare const request: ProbeServiceHttpRequest;
+
+export async function read(): Promise<number> {
+  const answered = await dispatch({ loggerName: "probe" }, request);
+  return answered.status;
+}
+"#;
 
 /// The implementation fixture, with every named operation but the ones listed as left out.
 #[cfg(feature = "zod")]
@@ -278,6 +319,28 @@ fn bundle_with_ws_seam() -> String {
         ProbeServiceSchema::ts_ws_client(),
         ProbeServiceSchema::ts_ws_service(),
     )
+}
+
+/// The bundle plus the `http_rest` server: `ts_http_service()` drives `createProbeServiceDispatcher`
+/// and reads `ProbeServiceFault`, both already in `bundle()`, so no further seam is needed beside
+/// it.
+#[cfg(feature = "zod")]
+fn bundle_with_http_service() -> String {
+    format!("{}\n\n{}", bundle(), ProbeServiceSchema::ts_http_service())
+}
+
+/// The HTTP implementation fixture, with every named operation but the ones listed as left out --
+/// mirrors [`implementation`].
+#[cfg(feature = "zod")]
+fn http_implementation(without: &[&str]) -> String {
+    let mut written = String::from(HTTP_IMPLEMENTATION_HEAD);
+    for (named, member) in IMPLEMENTATION_MEMBERS {
+        if !without.contains(&named) {
+            written.push_str(member);
+        }
+    }
+    written.push_str(HTTP_IMPLEMENTATION_TAIL);
+    written
 }
 
 /// Said on the process's own stderr rather than through `eprintln!`, which `cargo test` captures
@@ -507,6 +570,48 @@ fn an_implementation_missing_one_operation_is_refused_at_the_dispatcher_attachme
         !accepted,
         "an implementation answering four of five operations reached \
          `attachProbeServiceWsDispatcher` and the compiler allowed it:\n{said}"
+    );
+    assert!(
+        said.contains(OMITTED),
+        "the refusal has to name the operation left out. Got:\n{said}"
+    );
+    assert!(
+        said.contains("is missing") && said.contains("ProbeServiceImpl"),
+        "the refusal has to be a member missing from the service's own interface. Got:\n{said}"
+    );
+}
+
+/// The positive half of `ts_http_service()`'s own seal: the same implementation is accepted where
+/// it reaches `createProbeServiceHttpDispatcher`, wrapping the same `ProbeServiceImpl<Ctx>`.
+#[cfg(feature = "zod")]
+#[test]
+fn a_complete_implementation_is_accepted_at_the_http_dispatcher_factory() {
+    let mut files = bundled(bundle_with_http_service());
+    files.push(("implementation.ts", http_implementation(&[])));
+    let Some((accepted, said)) = compiled("http-complete", &files) else {
+        return;
+    };
+    assert!(
+        accepted,
+        "an implementation answering every operation does not compile against \
+         `createProbeServiceHttpDispatcher`:\n{said}"
+    );
+}
+
+/// The negative half: an implementation missing one operation, handed to
+/// `createProbeServiceHttpDispatcher` exactly as above, is refused the same way.
+#[cfg(feature = "zod")]
+#[test]
+fn an_implementation_missing_one_operation_is_refused_at_the_http_dispatcher_factory() {
+    let mut files = bundled(bundle_with_http_service());
+    files.push(("implementation.ts", http_implementation(&[OMITTED])));
+    let Some((accepted, said)) = compiled("http-incomplete", &files) else {
+        return;
+    };
+    assert!(
+        !accepted,
+        "an implementation answering four of five operations reached \
+         `createProbeServiceHttpDispatcher` and the compiler allowed it:\n{said}"
     );
     assert!(
         said.contains(OMITTED),

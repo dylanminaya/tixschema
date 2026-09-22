@@ -15,6 +15,7 @@ use super::{
     emitted_trait, exec_service_schema, multipart_envelope_refusal, stream_envelope_refusal,
 };
 use crate::model_schema::exec_model_schema;
+use crate::utils::record_untagged_enum;
 use core::mem::take;
 use proc_macro2::{Delimiter, Group, Span, TokenStream, TokenTree};
 use quote::{ToTokens as _, quote};
@@ -2810,6 +2811,80 @@ fn a_full_http_group_records_the_method_the_path_and_the_status_table() {
     assert!(matches!(binding.body_kind, BodyKind::Json));
 }
 
+/// The dispatcher answers every declared error at the fixed default-binding status instead.
+#[test]
+fn a_table_less_http_group_publishes_no_completeness_check() {
+    let table_less = expanded(
+        "pub trait GateService<Ctx> {
+            #[service_schema_op(http(method = \"GET\", path = \"/gates/{gate_id}\"))]
+            async fn check_gate(&self, ctx: &Ctx, gate_id: String) -> Result<GateStatus, GateError>;
+        }",
+    );
+    assert!(
+        !table_less.contains("const _ : fn (& GateError)"),
+        "an empty table has nothing to be complete against. Got: {table_less}"
+    );
+
+    let with_table = expanded(
+        "pub trait GateService<Ctx> {
+            #[service_schema_op(http(method = \"GET\", path = \"/gates/{gate_id}\", error_status(NotFound = 404)))]
+            async fn check_gate(&self, ctx: &Ctx, gate_id: String) -> Result<GateStatus, GateError>;
+        }",
+    );
+    assert!(
+        with_table.contains(
+            "const _ : fn (& GateError) -> u16 = | reported | match reported \
+             { GateError :: NotFound { .. } => 404u16 , } ;"
+        ),
+        "got: {with_table}"
+    );
+}
+
+/// The enum's own `{Enum}$Variant` reader answers `""` for every value, so no status can be read.
+#[test]
+fn an_untagged_error_type_mapped_to_two_statuses_is_refused() {
+    record_untagged_enum("WidgetErrorUntaggedProbe");
+    assert_eq!(
+        refusals(
+            "pub trait WidgetService<Ctx> {
+                #[service_schema_op(http(
+                    method = \"GET\",
+                    path = \"/widgets/{widget_id}\",
+                    error_status(Gone = 410, NotFound = 404),
+                ))]
+                async fn get_widget(&self, ctx: &Ctx, widget_id: String) -> Result<Widget, WidgetErrorUntaggedProbe>;
+            }"
+        ),
+        vec![
+            "service_schema: operation `get_widget`: `WidgetErrorUntaggedProbe` is \
+             `#[serde(untagged)]`, so no variant can be read off its value to pick a status\n       \
+             give the enum a tag or map every variant to one status"
+        ],
+        "an untagged error's own reader carries no variant name to switch on"
+    );
+}
+
+/// The same untagged error type mapped to a *single* status earns no refusal: every variant
+/// answers the same status regardless of which one matched, so nothing needs reading.
+#[test]
+fn an_untagged_error_type_mapped_to_one_status_is_not_refused() {
+    record_untagged_enum("WidgetErrorUntaggedSingleProbe");
+    assert_eq!(
+        refusals(
+            "pub trait WidgetService<Ctx> {
+                #[service_schema_op(http(
+                    method = \"GET\",
+                    path = \"/widgets/{widget_id}\",
+                    error_status(Gone = 410, NotFound = 410),
+                ))]
+                async fn get_widget(&self, ctx: &Ctx, widget_id: String) -> Result<Widget, WidgetErrorUntaggedSingleProbe>;
+            }"
+        ),
+        Vec::<String>::new(),
+        "one distinct status needs no variant read, mapped from either variant"
+    );
+}
+
 /// A `body = "bytes"` group whose reply already answers the fixed `(Vec<u8>, String)` shape
 /// records `BodyKind::Bytes` and earns no refusal.
 #[test]
@@ -3016,6 +3091,46 @@ fn an_optional_field_unbound_by_the_path_of_a_bodyless_method_is_not_refused() {
     );
 }
 
+/// A service whose every route is a literal path never constructs `PathToken::Placeholder`, so the
+/// `http_rest` expansion writes neither the variant nor its `match_path` arm — the same rule
+/// already applied to the query reader and the multipart part type.
+#[test]
+fn an_all_literal_route_table_writes_no_placeholder_variant() {
+    let dispatcher = published_macro_over_http_rest(
+        "pub trait PulseService<Ctx> {
+            #[service_schema_op(http(method = \"GET\", path = \"/pulse\"))]
+            async fn pulse(&self, ctx: &Ctx) -> Result<PulseResponse, PulseError>;
+        }",
+        "pulse_service_http_rest_dispatcher",
+    );
+    assert!(
+        dispatcher.contains("enum PathToken { Literal (& 'static str) , }"),
+        "got: {dispatcher}"
+    );
+    assert!(!dispatcher.contains("Placeholder"), "got: {dispatcher}");
+}
+
+/// A service declaring one placeholder path still writes both the variant and its `match_path`
+/// arm.
+#[test]
+fn a_route_table_with_a_placeholder_writes_the_placeholder_variant() {
+    let dispatcher = published_macro_over_http_rest(
+        "pub trait PulseService<Ctx> {
+            #[service_schema_op(http(method = \"GET\", path = \"/pulse/{id}\"))]
+            async fn pulse(&self, ctx: &Ctx, id: String) -> Result<PulseResponse, PulseError>;
+        }",
+        "pulse_service_http_rest_dispatcher",
+    );
+    assert!(
+        dispatcher.contains("enum PathToken { Literal (& 'static str) , Placeholder , }"),
+        "got: {dispatcher}"
+    );
+    assert!(
+        dispatcher.contains("PathToken :: Placeholder =>"),
+        "got: {dispatcher}"
+    );
+}
+
 /// `header_in` naming a parameter that answers to no argument in the signature is refused, naming
 /// the parameter.
 #[test]
@@ -3071,27 +3186,67 @@ fn the_service_module_carries_one_completeness_check_per_http_error_status() {
     assert!(
         body.contains(
             "const _ : fn (& GetVersionError) -> u16 = | reported | match reported \
-             { GetVersionError :: NotFound => 404u16 , GetVersionError :: VersionGone => 410u16 \
-             , } ;"
+             { GetVersionError :: NotFound { .. } => 404u16 , GetVersionError :: VersionGone \
+             { .. } => 410u16 , } ;"
         ),
         "got: {body}"
     );
 }
 
-/// Only a `Reply` operation naming `http(...)` carries a completeness check at all: `sweep` names
-/// no group and `purge_document` is one-way, so between the four operations exactly two checks
-/// are published, one per `Reply` operation that named a group — `create_document`'s carries no
-/// arms at all, its group having declared no `error_status`, which is rustc's own problem to
-/// raise against `DocumentError` rather than this crate's to guess at.
+/// Of the four operations, only `get_version` qualifies.
 #[test]
-fn only_a_reply_operation_naming_http_carries_a_completeness_check() {
+fn only_a_reply_operation_naming_a_non_empty_table_carries_a_completeness_check() {
     let expanded =
         exec_service_schema(TokenStream::new(), declared(HTTP_SERVICE).to_token_stream());
     let body = module_body(expanded, "document_service_schema").to_string();
-    assert_eq!(body.matches("const _ : fn (&").count(), 2, "got: {body}");
+    assert_eq!(body.matches("const _ : fn (&").count(), 1, "got: {body}");
     assert!(
-        body.contains("const _ : fn (& DocumentError) -> u16 = | reported | match reported {"),
-        "got: {body}"
+        !body.contains("DocumentError"),
+        "create_document's group declares no error_status, so it publishes no check at all. \
+         Got: {body}"
+    );
+}
+
+/// A table entry naming a struct variant or a tuple variant is written with the brace pattern,
+/// the one spelling rustc accepts for a unit, a tuple and a struct variant alike — the macro never
+/// reads the variant's own shape.
+#[test]
+fn a_table_entry_naming_a_payload_variant_is_matched_with_braces() {
+    let struct_variant = expanded(
+        "pub trait ArchiveService<Ctx> {
+            #[service_schema_op(http(
+                method = \"GET\",
+                path = \"/archives/{archive_id}\",
+                error_status(NotFound = 404, Locked = 423),
+            ))]
+            async fn check_archive(&self, ctx: &Ctx, archive_id: String) -> Result<ArchiveStatus, ArchiveError>;
+        }",
+    );
+    assert!(
+        struct_variant.contains(
+            "const _ : fn (& ArchiveError) -> u16 = | reported | match reported \
+             { ArchiveError :: NotFound { .. } => 404u16 , ArchiveError :: Locked { .. } => \
+             423u16 , } ;"
+        ),
+        "got: {struct_variant}"
+    );
+
+    let tuple_variant = expanded(
+        "pub trait ArchiveService<Ctx> {
+            #[service_schema_op(http(
+                method = \"GET\",
+                path = \"/archives/{archive_id}/gone\",
+                error_status(Gone = 410),
+            ))]
+            async fn check_gone(&self, ctx: &Ctx, archive_id: String) -> Result<ArchiveStatus, GoneError>;
+        }",
+    );
+    assert!(
+        tuple_variant.contains(
+            "const _ : fn (& GoneError) -> u16 = | reported | match reported \
+             { GoneError :: Gone { .. } => 410u16 , } ;"
+        ),
+        "got: {tuple_variant}"
     );
 }
 
@@ -3177,9 +3332,8 @@ fn a_streamed_operations_expansion_names_no_runtime_crate() {
 
 /// The `non_exhaustive` argument seals exactly the four generated types the design names — the
 /// registry, the fault kind, `CallError`, and a generated message struct — and nothing else in the
-/// expansion. The registry (`UsageServiceSchema`) is `features::service_schema::emit`'s own type
-/// and that module only builds where `typescript` does, so a build without it seals the other three
-/// and stops there.
+/// expansion. The registry (`UsageServiceSchema`) is `features::service_schema::emit`'s own type,
+/// which every `serde` build compiles regardless of which language feature, if any, is also on.
 #[test]
 fn the_non_exhaustive_flag_seals_exactly_the_four_generated_types() {
     let emitted = expansion_over_amqp_rpc_non_exhaustive(CREDIT_SERVICE).to_string();
@@ -3187,37 +3341,18 @@ fn the_non_exhaustive_flag_seals_exactly_the_four_generated_types() {
         "# [non_exhaustive] pub enum UsageServiceFaultKind",
         "# [non_exhaustive] pub enum CallError",
         "# [non_exhaustive] pub struct ExpireCreditRequest",
+        "# [non_exhaustive] pub struct UsageServiceSchema",
     ] {
         assert!(
             emitted.contains(sealed),
             "missing `{sealed}`. Got: {emitted}"
         );
     }
-    #[cfg(feature = "typescript")]
-    {
-        assert!(
-            emitted.contains("# [non_exhaustive] pub struct UsageServiceSchema"),
-            "missing `# [non_exhaustive] pub struct UsageServiceSchema`. Got: {emitted}"
-        );
-        assert_eq!(
-            emitted.matches("# [non_exhaustive]").count(),
-            4,
-            "exactly the four generated types should be sealed, and nothing else. Got: {emitted}"
-        );
-    }
-    #[cfg(not(feature = "typescript"))]
-    {
-        assert!(
-            !emitted.contains("UsageServiceSchema"),
-            "a build with no TypeScript publishes no registry to seal. Got: {emitted}"
-        );
-        assert_eq!(
-            emitted.matches("# [non_exhaustive]").count(),
-            3,
-            "exactly the three generated types this build carries should be sealed, and nothing \
-             else. Got: {emitted}"
-        );
-    }
+    assert_eq!(
+        emitted.matches("# [non_exhaustive]").count(),
+        4,
+        "exactly the four generated types should be sealed, and nothing else. Got: {emitted}"
+    );
 }
 
 /// Without the argument, the expansion carries no `#[non_exhaustive]` anywhere — the default this
@@ -3245,17 +3380,8 @@ fn the_flag_alone_is_accepted_and_asks_for_no_transport() {
             "`{absent}` belongs to a transport, and this service asked for none. Got: {emitted}"
         );
     }
-    // The registry (`UsageServiceSchema`) only exists in a build with `typescript`; `CallError`
-    // is generated in every build with `serde`, so it stands in for the flag reaching the
-    // expansion where the registry does not exist to check.
-    #[cfg(feature = "typescript")]
     assert!(
         emitted.contains("# [non_exhaustive] pub struct UsageServiceSchema"),
-        "got: {emitted}"
-    );
-    #[cfg(not(feature = "typescript"))]
-    assert!(
-        emitted.contains("# [non_exhaustive] pub enum CallError"),
         "got: {emitted}"
     );
 }

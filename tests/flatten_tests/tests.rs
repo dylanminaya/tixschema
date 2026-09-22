@@ -3528,10 +3528,18 @@ fn test_the_optional_all_object_tagged_flatten_type_names_the_keys_its_absence_l
 fn test_the_tagged_enums_are_byte_identical_standing_alone_on_typescript() {
     let bare = MemberExtBare::ts_definition();
     let objects = MemberExtObjects::ts_definition();
+    // Scoped to the type declaration alone: the `$Variant` reader appended after it is not part
+    // of what stands here byte-identical.
     assert_eq!(
         [
-            &bare[bare.find("export type").unwrap()..],
-            &objects[objects.find("export type").unwrap()..],
+            bare[bare.find("export type").unwrap()..]
+                .split("\n\n")
+                .next()
+                .unwrap(),
+            objects[objects.find("export type").unwrap()..]
+                .split("\n\n")
+                .next()
+                .unwrap(),
         ],
         [
             "export type MemberExtBare =   /**\n   * Bare\n   * \n   */\n  \"Bare\" | {\n  /**\n   * Wrapped\n   * \n   */\n  \"Wrapped\": FlatSecond;\n};",
@@ -3589,7 +3597,12 @@ fn test_an_inline_untagged_direct_flatten_type_closes_each_member_against_the_ot
 #[cfg(feature = "typescript")]
 fn test_the_inline_untagged_union_is_byte_identical_standing_alone() {
     let ts = InlineUntagEither::ts_definition();
-    let declared = &ts[ts.find("export type").unwrap()..];
+    // Scoped to the type declaration alone: the `$Variant` reader appended after it is not part
+    // of what stands here byte-identical.
+    let declared = ts[ts.find("export type").unwrap()..]
+        .split("\n\n")
+        .next()
+        .unwrap();
     assert_eq!(
         declared,
         "export type InlineUntagEither = { left: string } | { right: boolean };"
@@ -3902,7 +3915,12 @@ fn test_a_flattened_untagged_variant_field_round_trips_both_members() {
 #[cfg(feature = "typescript")]
 fn test_a_flattened_untagged_variant_field_is_a_typescript_intersection_inside_the_member() {
     let ts = UntaggedFlatVariant::ts_definition();
-    let declared = &ts[ts.find("export type").unwrap()..];
+    // Scoped to the type declaration alone: the `$Variant` reader appended after it is not part
+    // of what stands here byte-identical.
+    let declared = ts[ts.find("export type").unwrap()..]
+        .split("\n\n")
+        .next()
+        .unwrap();
     assert_eq!(
         declared,
         "export type UntaggedFlatVariant = { x: string } & VariantExtra | { y: string };"

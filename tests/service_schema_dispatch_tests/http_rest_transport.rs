@@ -10,6 +10,7 @@
 
 use crate::tests::{
     ArchiveError, CreateDocumentError, ExplodeError, GetVersionError, SearchError, ThumbnailError,
+    VaultError,
 };
 
 document_service_http_rest_dispatcher!();

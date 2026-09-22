@@ -6,7 +6,10 @@
 //! member is refused at the factory call is a claim only a TypeScript compiler can settle, and none
 //! is reachable from this repository.
 
-use super::{MIXED_SERVICE, service_of};
+use super::{
+    MIXED_HTTP_SERVICE, MIXED_SERVICE, MULTIPART_HTTP_SERVICE, REQUIRED_HEADER_HTTP_SERVICE,
+    service_of,
+};
 
 #[test]
 fn an_implementation_answers_an_outcome_that_has_no_fault_in_it() {
@@ -81,9 +84,17 @@ fn the_dispatcher_factory_answers_with_a_dispatch_function() {
         "got: {written}"
     );
     assert!(
-        written
-            .contains("): (ctx: Ctx, operation: string, payload: unknown) => Promise<unknown> {"),
+        written.contains(
+            "): (ctx: Ctx, operation: string, payload: unknown, headers?: ReadonlyArray<readonly \
+             [string, string]>, parts?: ReadonlyArray<readonly [string, unknown]>) => \
+             Promise<unknown> {"
+        ),
         "got: {written}"
+    );
+    assert!(
+        written.contains("return async (ctx, operation, payload, headers = [], parts = []) => {"),
+        "both extra arguments default to an empty list so every existing three-argument call \
+         still compiles. Got: {written}"
     );
 }
 
@@ -236,5 +247,155 @@ fn the_seal_leaves_the_framing_a_caller_narrows_on_untouched() {
         !written.contains("usageServiceFaultSeal"),
         "the seal is declared beside the fault, not written into the dispatcher: a bundle \
          declaring it twice does not compile. Got: {written}"
+    );
+}
+
+/// Never optional-key sugar — the dispatcher always hands a value or `undefined` explicitly.
+#[test]
+fn an_optional_header_in_binding_adds_one_argument_after_the_message() {
+    let written = service_of(MIXED_HTTP_SERVICE);
+    assert!(
+        written.contains(
+            "getVersion(ctx: Ctx, req: GetVersionRequest, byteRange: string | undefined): \
+             Promise<DocumentClientServiceGetVersionOutcome>;"
+        ),
+        "got: {written}"
+    );
+    assert!(
+        !written.contains("byteRange?:"),
+        "the argument is `T | undefined`, not an optional key: the dispatcher always passes \
+         something, present or `undefined`. Got: {written}"
+    );
+}
+
+/// A part's value is carried exactly as it arrived, never decoded.
+#[test]
+fn a_part_binding_adds_its_own_argument_typed_unknown() {
+    let written = service_of(MULTIPART_HTTP_SERVICE);
+    assert!(
+        written.contains(
+            "uploadDocument(ctx: Ctx, req: UploadDocumentRequest, attachment: unknown): \
+             Promise<UploadClientServiceUploadDocumentOutcome>;"
+        ),
+        "got: {written}"
+    );
+}
+
+/// The dispatcher refuses a missing one before the implementation is ever reached.
+#[test]
+fn a_required_header_in_binding_adds_a_plainly_typed_argument() {
+    let written = service_of(REQUIRED_HEADER_HTTP_SERVICE);
+    assert!(
+        written.contains(
+            "getVersion(ctx: Ctx, req: GetVersionRequest, byteRange: string): \
+             Promise<DocumentClientServiceGetVersionOutcome>;"
+        ),
+        "got: {written}"
+    );
+}
+
+#[test]
+fn an_operation_with_no_binding_takes_no_extra_argument() {
+    let written = service_of(MIXED_HTTP_SERVICE);
+    assert!(
+        written.contains(
+            "createDocument(ctx: Ctx, req: CreateDocumentRequest): \
+             Promise<DocumentClientServiceCreateDocumentOutcome>;"
+        ),
+        "got: {written}"
+    );
+}
+
+#[test]
+fn the_arm_looks_up_an_optional_header_and_passes_it_to_the_call() {
+    let written = service_of(MIXED_HTTP_SERVICE);
+    let arm = written
+        .split("      case \"get-version\": {")
+        .nth(1)
+        .and_then(|rest| rest.split_once("\n      }"))
+        .map(|(body, _)| body.to_owned());
+    assert!(arm.is_some(), "got: {written}");
+    let body = arm.unwrap();
+    assert!(
+        body.contains(
+            "const byteRangeText = headers.find(([name]) => name.toLowerCase() === \
+             \"range\")?.[1];"
+        ),
+        "got: {body}"
+    );
+    assert!(
+        body.contains("const byteRange = byteRangeText === undefined ? undefined : byteRangeText;"),
+        "got: {body}"
+    );
+    assert!(
+        body.contains("return impl.getVersion(ctx, received.data, byteRange);"),
+        "the call is `impl.<op>(ctx, received.data, <headers...>, <parts...>)`. Got: {body}"
+    );
+}
+
+#[test]
+fn a_missing_required_header_answers_the_same_framed_fault_a_bad_payload_gets() {
+    let written = service_of(REQUIRED_HEADER_HTTP_SERVICE);
+    let arm = written
+        .split("      case \"get-version\": {")
+        .nth(1)
+        .and_then(|rest| rest.split_once("\n      }"))
+        .map(|(body, _)| body.to_owned());
+    assert!(arm.is_some(), "got: {written}");
+    let body = arm.unwrap();
+    assert!(
+        body.contains(
+            "const byteRangeText = headers.find(([name]) => name.toLowerCase() === \
+             \"range\")?.[1];"
+        ),
+        "got: {body}"
+    );
+    assert!(
+        body.contains(
+            "if (byteRangeText === undefined) {\n          return \
+             documentClientServiceFramed(documentClientServiceInboundFault(\"get-version\", \
+             [{ path: [\"range\"], message: \"a required header was not carried\" }]));\n        \
+             }"
+        ),
+        "got: {body}"
+    );
+    assert!(
+        body.contains("const byteRange = byteRangeText;"),
+        "got: {body}"
+    );
+    assert!(
+        body.find("if (byteRangeText === undefined)").unwrap()
+            > body.find("safeParse(payload)").unwrap(),
+        "the message is checked first, exactly as the message check runs before every binding \
+         read. Got: {body}"
+    );
+}
+
+#[test]
+fn the_arm_looks_up_a_bound_part_and_refuses_a_missing_one_through_the_same_fault() {
+    let written = service_of(MULTIPART_HTTP_SERVICE);
+    let arm = written
+        .split("      case \"upload-document\": {")
+        .nth(1)
+        .and_then(|rest| rest.split_once("\n      }"))
+        .map(|(body, _)| body.to_owned());
+    assert!(arm.is_some(), "got: {written}");
+    let body = arm.unwrap();
+    assert!(
+        body.contains("const attachment = parts.find(([name]) => name === \"file\")?.[1];"),
+        "got: {body}"
+    );
+    assert!(
+        body.contains(
+            "if (attachment === undefined) {\n          return \
+             uploadClientServiceFramed(uploadClientServiceInboundFault(\"upload-document\", [{ \
+             path: [\"file\"], message: \"a required multipart part was not carried\" }]));\n        \
+             }"
+        ),
+        "got: {body}"
+    );
+    assert!(
+        body.contains("return impl.uploadDocument(ctx, received.data, attachment);"),
+        "got: {body}"
     );
 }

@@ -23,10 +23,10 @@ struct Tag {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct PlainFields {
-    count: u64,
+    count: i64,
     labels: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    maybe_count: Option<u64>,
+    maybe_count: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     maybe_tag: Option<Tag>,
     tag: Tag,
@@ -36,10 +36,10 @@ struct PlainFields {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct BoxedFields {
-    count: Box<u64>,
+    count: Box<i64>,
     labels: Box<[String]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    maybe_count: Box<Option<u64>>,
+    maybe_count: Box<Option<i64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     maybe_tag: Box<Option<Tag>>,
     tag: Box<Tag>,
@@ -49,10 +49,10 @@ struct BoxedFields {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct RcFields {
-    count: Rc<u64>,
+    count: Rc<i64>,
     labels: Rc<[String]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    maybe_count: Rc<Option<u64>>,
+    maybe_count: Rc<Option<i64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     maybe_tag: Rc<Option<Tag>>,
     tag: Rc<Tag>,
@@ -62,10 +62,10 @@ struct RcFields {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct ArcFields {
-    count: Arc<u64>,
+    count: Arc<i64>,
     labels: Arc<[String]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    maybe_count: Arc<Option<u64>>,
+    maybe_count: Arc<Option<i64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     maybe_tag: Arc<Option<Tag>>,
     tag: Arc<Tag>,
@@ -75,10 +75,10 @@ struct ArcFields {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct CowFields {
-    count: Cow<'static, u64>,
+    count: Cow<'static, i64>,
     labels: Cow<'static, [String]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    maybe_count: Cow<'static, Option<u64>>,
+    maybe_count: Cow<'static, Option<i64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     maybe_tag: Cow<'static, Option<Tag>>,
     tag: Cow<'static, Tag>,
@@ -91,10 +91,10 @@ struct CowFields {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct RefCellFields {
-    count: RefCell<u64>,
+    count: RefCell<i64>,
     labels: RefCell<Vec<String>>,
     #[serde(default, skip_serializing_if = "ref_cell_option_is_none")]
-    maybe_count: RefCell<Option<u64>>,
+    maybe_count: RefCell<Option<i64>>,
     #[serde(default, skip_serializing_if = "ref_cell_option_is_none")]
     maybe_tag: RefCell<Option<Tag>>,
     tag: RefCell<Tag>,
@@ -106,10 +106,10 @@ struct RefCellFields {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug)]
 struct MutexFields {
-    count: Mutex<u64>,
+    count: Mutex<i64>,
     labels: Mutex<Vec<String>>,
     #[serde(default, skip_serializing_if = "mutex_option_is_none")]
-    maybe_count: Mutex<Option<u64>>,
+    maybe_count: Mutex<Option<i64>>,
     #[serde(default, skip_serializing_if = "mutex_option_is_none")]
     maybe_tag: Mutex<Option<Tag>>,
     tag: Mutex<Tag>,
@@ -119,10 +119,10 @@ struct MutexFields {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug)]
 struct RwLockFields {
-    count: RwLock<u64>,
+    count: RwLock<i64>,
     labels: RwLock<Vec<String>>,
     #[serde(default, skip_serializing_if = "rwlock_option_is_none")]
-    maybe_count: RwLock<Option<u64>>,
+    maybe_count: RwLock<Option<i64>>,
     #[serde(default, skip_serializing_if = "rwlock_option_is_none")]
     maybe_tag: RwLock<Option<Tag>>,
     tag: RwLock<Tag>,
@@ -134,17 +134,17 @@ struct RwLockFields {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct CellFields {
-    count: Cell<u64>,
+    count: Cell<i64>,
     #[serde(default, skip_serializing_if = "cell_option_is_none")]
-    maybe_count: Cell<Option<u64>>,
+    maybe_count: Cell<Option<i64>>,
 }
 
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct PlainCopyFields {
-    count: u64,
+    count: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    maybe_count: Option<u64>,
+    maybe_count: Option<i64>,
 }
 
 // A wrapper written under something else: inside an `Option`, inside a sequence, in a map's value
@@ -152,7 +152,7 @@ struct PlainCopyFields {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct WrappedInsideFields {
-    counts: HashMap<String, Rc<u64>>,
+    counts: HashMap<String, Rc<i64>>,
     elements: Vec<Rc<Tag>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     maybe_tag: Option<Box<Tag>>,
@@ -161,7 +161,7 @@ struct WrappedInsideFields {
 #[model_schema()]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct PlainInsideFields {
-    counts: HashMap<String, u64>,
+    counts: HashMap<String, i64>,
     elements: Vec<Tag>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     maybe_tag: Option<Tag>,
@@ -173,7 +173,7 @@ struct PlainInsideFields {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct MixedBoxedFields {
     boxed_tag: Box<Tag>,
-    count: u64,
+    count: i64,
     plain_tag: Tag,
 }
 
@@ -181,7 +181,7 @@ struct MixedBoxedFields {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct MixedPlainFields {
     boxed_tag: Tag,
-    count: u64,
+    count: i64,
     plain_tag: Tag,
 }
 
@@ -476,12 +476,12 @@ fn test_every_covered_wrapper_writes_its_inner_value() {
 #[test]
 fn test_a_wrapper_written_inside_another_type_writes_the_inner_value() {
     let inside = WrappedInsideFields {
-        counts: HashMap::from([("k".to_owned(), Rc::new(1_u64))]),
+        counts: HashMap::from([("k".to_owned(), Rc::new(1_i64))]),
         elements: vec![Rc::new(tag())],
         maybe_tag: Some(Box::new(tag())),
     };
     let plain_inside = PlainInsideFields {
-        counts: HashMap::from([("k".to_owned(), 1_u64)]),
+        counts: HashMap::from([("k".to_owned(), 1_i64)]),
         elements: vec![tag()],
         maybe_tag: Some(tag()),
     };

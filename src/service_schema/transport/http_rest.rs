@@ -61,8 +61,8 @@ use super::amqp_rpc::{
 use crate::service_schema::parse::{
     BodyKind, DEFAULT_BINDING_ERROR_STATUS, HeaderIn, HttpShape, MultipartPart, OperationDef,
     OperationInputs, OperationOutcome, PathSegment, ScalarKind, ServiceDef, is_scalar_named_type,
-    is_unit_type, option_inner, scalar_kind, service_declares_a_stream, service_declares_multipart,
-    tuple_elements, vec_inner, wire_key,
+    is_unit_type, option_inner, scalar_kind, service_declares_a_placeholder,
+    service_declares_a_stream, service_declares_multipart, tuple_elements, vec_inner, wire_key,
 };
 use crate::service_schema::support::{message_alias_ident, message_validator_ident, module_ident};
 use proc_macro2::TokenStream;
@@ -290,7 +290,7 @@ fn dispatcher_items(service: &ServiceDef) -> TokenStream {
     let path_token = if service.operations.is_empty() {
         TokenStream::new()
     } else {
-        path_token_type()
+        path_token_type(service_declares_a_placeholder(service))
     };
     // The query reader is one bodyless field's, unbound by any path placeholder; a service with
     // none never reaches for it.
@@ -498,12 +498,34 @@ fn outgoing_response_items(has_stream: bool, module: &Ident) -> TokenStream {
 
 /// One piece of a path template at runtime: text written exactly as declared, or a `{field}`
 /// placeholder capturing up to the next `/`. Emitted only where at least one route exists to be
-/// matched against — a service declaring no operation has no arm to call `match_path` from.
-fn path_token_type() -> TokenStream {
+/// matched against — a service declaring no operation has no arm to call `match_path` from. The
+/// `Placeholder` variant and its `match_path` arm are written only when `has_placeholder`.
+fn path_token_type(has_placeholder: bool) -> TokenStream {
+    let placeholder_variant = has_placeholder.then(|| quote! { Placeholder, });
+    let placeholder_arm = has_placeholder.then(|| {
+        quote! {
+            PathToken::Placeholder => {
+                let end = rest.find('/').unwrap_or(rest.len());
+                let (value, remainder) = rest.split_at(end);
+                if value.is_empty() {
+                    return None;
+                }
+                captured.push(value.to_owned());
+                rest = remainder;
+            }
+        }
+    });
+    // `captured` is only ever pushed to from the placeholder arm, so a table with none never
+    // mutates it - declaring it `mut` regardless would earn its own `-D warnings` refusal.
+    let captured_binding = if has_placeholder {
+        quote! { let mut captured = ::std::vec::Vec::new(); }
+    } else {
+        quote! { let captured = ::std::vec::Vec::new(); }
+    };
     quote! {
         enum PathToken {
             Literal(&'static str),
-            Placeholder,
+            #placeholder_variant
         }
 
         /// Matches `path` against `template` left to right, and answers what each placeholder
@@ -511,19 +533,11 @@ fn path_token_type() -> TokenStream {
         /// nothing, or text remains once the template is exhausted.
         fn match_path(template: &[PathToken], path: &str) -> Option<::std::vec::Vec<String>> {
             let mut rest = path;
-            let mut captured = ::std::vec::Vec::new();
+            #captured_binding
             for token in template {
                 match token {
                     PathToken::Literal(text) => rest = rest.strip_prefix(text)?,
-                    PathToken::Placeholder => {
-                        let end = rest.find('/').unwrap_or(rest.len());
-                        let (value, remainder) = rest.split_at(end);
-                        if value.is_empty() {
-                            return None;
-                        }
-                        captured.push(value.to_owned());
-                        rest = remainder;
-                    }
+                    #placeholder_arm
                 }
             }
             rest.is_empty().then_some(captured)
@@ -785,7 +799,7 @@ fn dispatch_arm(module: &Ident, operation: &OperationDef, has_stream: bool) -> T
     let header_in_lets: TokenStream = shape
         .header_in
         .iter()
-        .map(|header| header_in_let(wire, header))
+        .map(|header| header_in_let(module, wire, header))
         .collect();
 
     let multipart_part_lets: TokenStream = shape
@@ -885,16 +899,27 @@ fn multipart_part_let(module: &Ident, wire: &str, part: &MultipartPart) -> Token
     }
 }
 
-fn header_in_let(wire: &str, header: &HeaderIn) -> TokenStream {
+fn header_in_let(module: &Ident, wire: &str, header: &HeaderIn) -> TokenStream {
     let name = &header.name;
     let parameter = &header.parameter;
     let declared_type = &header.ty;
     let decode = decode_expr(declared_type, &quote! { text });
+    let absent = if option_inner(declared_type).is_some() {
+        quote! { ::serde_json::Value::Null }
+    } else {
+        quote! {
+            return handler.on_fault(&$crate::#module::ServiceFault::failed_validation(
+                #wire,
+                Some(#name),
+                "a required header was not carried",
+            ))
+        }
+    };
     quote! {
         let #parameter: #declared_type = {
             let source = match request.header(#name) {
                 Some(text) => #decode,
-                None => ::serde_json::Value::Null,
+                None => #absent,
             };
             match ::serde_json::from_value(source) {
                 Ok(value) => value,
@@ -1086,7 +1111,7 @@ fn error_status_expr(shape: &HttpShape, error_type: &Type) -> TokenStream {
         let arms = shape
             .error_status
             .iter()
-            .map(|(variant, code)| quote! { #error_type::#variant => #code, });
+            .map(|(variant, code)| quote! { #error_type::#variant { .. } => #code, });
         quote! { match &declared_error { #(#arms)* } }
     }
 }

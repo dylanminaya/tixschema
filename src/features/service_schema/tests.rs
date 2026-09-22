@@ -11,36 +11,66 @@
 //! group in `tests/service_schema_typescript_tests/type_check.rs` hands the bundle and two
 //! implementations to a real `tsc` wherever one is reachable.
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod client_tests;
 #[cfg(feature = "dart")]
 mod dart_http_client_tests;
 #[cfg(feature = "dart")]
+mod dart_result_tests;
+#[cfg(feature = "dart")]
 mod dart_ws_client_tests;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod http_client_tests;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
+mod http_service_tests;
+#[cfg(feature = "kotlin")]
+mod kotlin_http_client_tests;
+#[cfg(feature = "kotlin")]
+mod kotlin_ws_client_tests;
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod service_tests;
-#[cfg(feature = "zod")]
+#[cfg(feature = "swift")]
+mod swift_http_client_tests;
+#[cfg(feature = "swift")]
+mod swift_ws_client_tests;
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod ws_client_tests;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
+mod ws_server_tests;
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod ws_service_tests;
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 use super::client;
 #[cfg(feature = "dart")]
 use super::dart_http_client;
 #[cfg(feature = "dart")]
+use super::dart_result;
+#[cfg(feature = "dart")]
 use super::dart_ws_client;
-#[cfg(feature = "zod")]
+use super::emit;
+#[cfg(all(feature = "typescript", feature = "zod"))]
 use super::http_client;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
+use super::http_service;
+#[cfg(feature = "kotlin")]
+use super::kotlin_http_client;
+#[cfg(feature = "kotlin")]
+use super::kotlin_ws_client;
+#[cfg(feature = "typescript")]
+use super::result;
+#[cfg(all(feature = "typescript", feature = "zod"))]
 use super::service;
-#[cfg(feature = "zod")]
+#[cfg(feature = "swift")]
+use super::swift_http_client;
+#[cfg(feature = "swift")]
+use super::swift_ws_client;
+#[cfg(all(feature = "typescript", feature = "zod"))]
 use super::ws_client;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
+use super::ws_server;
+#[cfg(all(feature = "typescript", feature = "zod"))]
 use super::ws_service;
-use super::{emit, result};
 use crate::service_schema::parse::{ServiceDef, parse_service};
 use quote::ToTokens as _;
 use syn::ItemTrait;
@@ -74,7 +104,7 @@ const MIXED_SERVICE: &str = "
 /// `header_in` binding, a `header_out` tuple success and two mapped errors (one of which shares a
 /// code with a fixed fault status), a one-way `DELETE` whose one argument is the message and the
 /// whole placeholder at once, and an operation naming no `http(...)` group at all.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const MIXED_HTTP_SERVICE: &str = "
     pub trait DocumentClientService<Ctx> {
         #[service_schema_op(http(
@@ -107,6 +137,27 @@ const MIXED_HTTP_SERVICE: &str = "
         async fn purge_document(&self, ctx: &Ctx, document_id: String);
 
         async fn sweep_documents(&self, ctx: &Ctx) -> Result<SweepReport, SweepError>;
+    }
+";
+
+/// A service with a required (non-`Option`) `header_in` binding, to exercise the presence check
+/// `MIXED_HTTP_SERVICE`'s `Option<String>` `byte_range` does not get.
+#[cfg(all(feature = "typescript", feature = "zod"))]
+const REQUIRED_HEADER_HTTP_SERVICE: &str = "
+    pub trait DocumentClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/versions/{version_id}\",
+            ok_status = 200,
+            header_in(\"range\" = byte_range),
+            error_status(NotFound = 404, VersionGone = 410),
+        ))]
+        async fn get_version(
+            &self,
+            ctx: &Ctx,
+            req: GetVersionRequest,
+            byte_range: String,
+        ) -> Result<VersionResponse, GetVersionError>;
     }
 ";
 
@@ -179,7 +230,7 @@ const DART_HTTP_SERVICE: &str = "
 
 /// A service declaring one `body = \"bytes\"` operation composing `header_out` onto its own tuple:
 /// the bytes, their content type, then the declared header.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const BYTES_HTTP_SERVICE: &str = "
     pub trait ThumbnailClientService<Ctx> {
         #[service_schema_op(http(
@@ -200,7 +251,7 @@ const BYTES_HTTP_SERVICE: &str = "
 /// A service declaring two `body = \"stream\"` operations: one answering the bare streamed answer,
 /// one composing a declared `header_out` onto it. Zod-gated mirror of `DART_STREAM_HTTP_SERVICE`,
 /// since a build can carry `zod` without `dart`.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const STREAM_HTTP_SERVICE: &str = "
     pub trait ContentClientService<Ctx> {
         #[service_schema_op(http(
@@ -232,7 +283,7 @@ const STREAM_HTTP_SERVICE: &str = "
 
 /// A service declaring one `body = \"multipart\"` operation: a path placeholder, two scalar
 /// `Generated` fields (one required, one optional) and a `part` binding for the file itself.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const MULTIPART_HTTP_SERVICE: &str = "
     pub trait UploadClientService<Ctx> {
         #[service_schema_op(http(
@@ -253,7 +304,7 @@ const MULTIPART_HTTP_SERVICE: &str = "
     }
 ";
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
     pub trait ConversationClientService<Ctx> {
         #[service_schema_op(http(
@@ -272,6 +323,47 @@ const SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
             path = \"/conversations/{conversation_id}\",
         ))]
         async fn purge_conversation(&self, ctx: &Ctx, conversation_id: String);
+    }
+";
+
+/// A service declaring one bodyless `GET` whose macro-generated message carries a placeholder
+/// field plus two unbound loose arguments (one numeric, one boolean), and whose operation
+/// declares no `error_status` table at all.
+#[cfg(all(feature = "typescript", feature = "zod"))]
+const QUERY_HTTP_SERVICE: &str = "
+    pub trait SearchClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/search/{category}\",
+        ))]
+        async fn search(
+            &self,
+            ctx: &Ctx,
+            category: String,
+            limit: Option<u32>,
+            verbose: Option<bool>,
+        ) -> Result<SearchResponse, SearchError>;
+    }
+";
+
+/// The same declaration `tests/service_schema_emitted_client_tests/tests.rs` runs the emitted
+/// clients against — `ConversationId` a wire-scalar newtype, `purge_conversation` declared first,
+/// `window` second.
+#[cfg(all(feature = "typescript", feature = "zod"))]
+const EMITTED_CLIENT_TEST_SERVICE: &str = "
+    pub trait ConversationClientService<Ctx> {
+        #[service_schema_op(
+            one_way,
+            http(method = \"DELETE\", path = \"/v1/conversations/{conversation_id}\",)
+        )]
+        async fn purge_conversation(&self, ctx: &Ctx, conversation_id: ConversationId);
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/v1/conversations/{conversation_id}/window\",
+            error_status(NotFound = 404),
+        ))]
+        async fn window(&self, ctx: &Ctx, req: WindowRequest) -> Result<WindowPage, WindowError>;
     }
 ";
 
@@ -374,6 +466,208 @@ const DART_SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
     }
 ";
 
+/// A reply operation whose success is `()` — nothing rides in the pair's `Ok` member or the
+/// clients' unit arm.
+#[cfg(feature = "dart")]
+const DART_UNIT_SUCCESS_HTTP_SERVICE: &str = "
+    pub trait PingClientService<Ctx> {
+        #[service_schema_op(http(method = \"POST\", path = \"/v1/ping\"))]
+        async fn ping(&self, ctx: &Ctx, req: PingRequest) -> Result<(), PingError>;
+    }
+";
+
+/// A service exercising every `http(...)` shape the Kotlin client answers for. Kotlin-gated mirror
+/// of `DART_HTTP_SERVICE`, since a build can carry `kotlin` without `dart`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_HTTP_SERVICE: &str = "
+    pub trait DocumentClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"POST\",
+            path = \"/documents\",
+            error_status(TitleTaken = 409)
+        ))]
+        async fn create_document(
+            &self,
+            ctx: &Ctx,
+            req: CreateDocumentRequest,
+        ) -> Result<CreateDocumentResponse, CreateDocumentError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/versions/{version_id}\",
+            ok_status = 200,
+            header_in(\"range\" = byte_range),
+            header_out(\"etag\"),
+            error_status(NotFound = 404, VersionGone = 410),
+        ))]
+        async fn get_version(
+            &self,
+            ctx: &Ctx,
+            req: GetVersionRequest,
+            byte_range: Option<String>,
+        ) -> Result<(VersionResponse, String), GetVersionError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/search\",
+            error_status(SearchFailed = 500),
+        ))]
+        async fn search_documents(
+            &self,
+            ctx: &Ctx,
+            q: Option<String>,
+            tags: Option<Vec<String>>,
+        ) -> Result<SearchResponse, SearchError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/thumbnail\",
+            error_status(NotFound = 404),
+            body = \"bytes\",
+        ))]
+        async fn get_thumbnail(
+            &self,
+            ctx: &Ctx,
+            document_id: String,
+        ) -> Result<(Vec<u8>, String), ThumbnailError>;
+
+        #[service_schema_op(one_way, http(method = \"DELETE\", path = \"/documents/{document_id}\"))]
+        async fn purge_document(&self, ctx: &Ctx, document_id: String);
+
+        async fn sweep_documents(&self, ctx: &Ctx) -> Result<SweepReport, SweepError>;
+    }
+";
+
+/// A service declaring one `body = \"bytes\"` operation composing `header_out` onto its own tuple.
+/// Kotlin-gated mirror of `BYTES_HTTP_SERVICE`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_BYTES_HEADER_OUT_SERVICE: &str = "
+    pub trait ThumbnailClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/thumbnail\",
+            body = \"bytes\",
+            header_out(\"x-document-id\"),
+            error_status(NotFound = 404),
+        ))]
+        async fn get_thumbnail(
+            &self,
+            ctx: &Ctx,
+            document_id: String,
+        ) -> Result<(Vec<u8>, String, String), ThumbnailError>;
+    }
+";
+
+/// A service declaring two `body = \"stream\"` operations. Kotlin-gated mirror of
+/// `DART_STREAM_HTTP_SERVICE`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_STREAM_HTTP_SERVICE: &str = "
+    pub trait ContentClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/files/{file_id}\",
+            body = \"stream\",
+            error_status(NotFound = 404),
+        ))]
+        async fn get_file(
+            &self,
+            ctx: &Ctx,
+            file_id: String,
+        ) -> Result<StreamedAnswer, ContentError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/files/{file_id}/tagged\",
+            body = \"stream\",
+            header_out(\"x-checksum\"),
+            error_status(NotFound = 404),
+        ))]
+        async fn get_tagged_file(
+            &self,
+            ctx: &Ctx,
+            file_id: String,
+        ) -> Result<(StreamedAnswer, String), ContentError>;
+    }
+";
+
+/// A service declaring one `body = \"multipart\"` operation. Kotlin-gated mirror of
+/// `MULTIPART_HTTP_SERVICE`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_MULTIPART_HTTP_SERVICE: &str = "
+    pub trait UploadClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"POST\",
+            path = \"/folders/{folder_id}/documents\",
+            body = \"multipart\",
+            part(\"file\" = attachment),
+            error_status(TooLarge = 413),
+        ))]
+        async fn upload_document(
+            &self,
+            ctx: &Ctx,
+            folder_id: String,
+            title: String,
+            description: Option<String>,
+            attachment: Box<dyn upload_client_service_schema::BodySource + Send>,
+        ) -> Result<UploadResponse, UploadError>;
+    }
+";
+
+/// The same single-placeholder shape `SINGLE_PLACEHOLDER_HTTP_SERVICE`/
+/// `DART_SINGLE_PLACEHOLDER_HTTP_SERVICE` declare, gated on `kotlin` so a build can carry it
+/// without `zod` or `dart`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
+    pub trait ConversationClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/conversations/{conversation_id}/window\",
+            error_status(NotFound = 404),
+        ))]
+        async fn window(
+            &self,
+            ctx: &Ctx,
+            req: WindowRequest,
+        ) -> Result<WindowPage, WindowError>;
+
+        #[service_schema_op(one_way, http(
+            method = \"DELETE\",
+            path = \"/conversations/{conversation_id}\",
+        ))]
+        async fn purge_conversation(&self, ctx: &Ctx, conversation_id: String);
+    }
+";
+
+/// A reply operation whose success is `()`. Kotlin-gated mirror of `DART_UNIT_SUCCESS_HTTP_SERVICE`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_UNIT_SUCCESS_HTTP_SERVICE: &str = "
+    pub trait PingClientService<Ctx> {
+        #[service_schema_op(http(method = \"POST\", path = \"/v1/ping\"))]
+        async fn ping(&self, ctx: &Ctx, req: PingRequest) -> Result<(), PingError>;
+    }
+";
+
+/// The design's own running example: a reply operation over a `Named` message answering a
+/// declared success or error, and a one-way operation over a branded newtype. Kotlin-gated mirror
+/// of `SWIFT_WS_SERVICE`, since it exercises `kotlin_ws_client()` independent of `zod`/`dart`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_WS_SERVICE: &str = "
+    pub trait ConversationClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/v1/conversations/{conversation_id}/window\",
+            error_status(NotFound = 404),
+        ))]
+        async fn window(&self, ctx: &Ctx, req: WindowRequest) -> Result<WindowPage, WindowError>;
+
+        #[service_schema_op(
+            one_way,
+            http(method = \"DELETE\", path = \"/v1/conversations/{conversation_id}\",)
+        )]
+        async fn purge_conversation(&self, ctx: &Ctx, conversation_id: ConversationId);
+    }
+";
+
 /// A service exercising both operation shapes `ws_rpc` answers for: a reply operation over a
 /// `Named` message, and a one-way operation. Named for the design's own running example.
 #[cfg(feature = "dart")]
@@ -390,24 +684,260 @@ const DART_WS_SERVICE: &str = "
     }
 ";
 
-#[cfg(feature = "zod")]
+/// Every `http(...)` shape the Swift client answers for. Swift-gated mirror of `DART_HTTP_SERVICE`.
+#[cfg(feature = "swift")]
+const SWIFT_HTTP_SERVICE: &str = "
+    pub trait DocumentClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"POST\",
+            path = \"/documents\",
+            error_status(TitleTaken = 409)
+        ))]
+        async fn create_document(
+            &self,
+            ctx: &Ctx,
+            req: CreateDocumentRequest,
+        ) -> Result<CreateDocumentResponse, CreateDocumentError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/versions/{version_id}\",
+            ok_status = 200,
+            header_in(\"range\" = byte_range),
+            header_out(\"etag\"),
+            error_status(NotFound = 404, VersionGone = 410),
+        ))]
+        async fn get_version(
+            &self,
+            ctx: &Ctx,
+            req: GetVersionRequest,
+            byte_range: Option<String>,
+        ) -> Result<(VersionResponse, String), GetVersionError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/search\",
+            error_status(SearchFailed = 500),
+        ))]
+        async fn search_documents(
+            &self,
+            ctx: &Ctx,
+            q: Option<String>,
+            tags: Option<Vec<String>>,
+        ) -> Result<SearchResponse, SearchError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/thumbnail\",
+            error_status(NotFound = 404),
+            body = \"bytes\",
+        ))]
+        async fn get_thumbnail(
+            &self,
+            ctx: &Ctx,
+            document_id: String,
+        ) -> Result<(Vec<u8>, String), ThumbnailError>;
+
+        #[service_schema_op(one_way, http(method = \"DELETE\", path = \"/documents/{document_id}\"))]
+        async fn purge_document(&self, ctx: &Ctx, document_id: String);
+
+        async fn sweep_documents(&self, ctx: &Ctx) -> Result<SweepReport, SweepError>;
+    }
+";
+
+/// A service declaring one `body = \"bytes\"` operation composing `header_out` onto its own tuple:
+/// the bytes, their content type, then the declared header. Swift-gated mirror of
+/// `DART_BYTES_HEADER_OUT_SERVICE`.
+#[cfg(feature = "swift")]
+const SWIFT_BYTES_HEADER_OUT_SERVICE: &str = "
+    pub trait ThumbnailClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/thumbnail\",
+            body = \"bytes\",
+            header_out(\"x-document-id\"),
+            error_status(NotFound = 404),
+        ))]
+        async fn get_thumbnail(
+            &self,
+            ctx: &Ctx,
+            document_id: String,
+        ) -> Result<(Vec<u8>, String, String), ThumbnailError>;
+    }
+";
+
+/// A service declaring two `body = \"stream\"` operations: one answering the bare streamed answer,
+/// one composing a declared `header_out` onto it. Swift-gated mirror of `DART_STREAM_HTTP_SERVICE`.
+#[cfg(feature = "swift")]
+const SWIFT_STREAM_HTTP_SERVICE: &str = "
+    pub trait ContentClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/files/{file_id}\",
+            body = \"stream\",
+            error_status(NotFound = 404),
+        ))]
+        async fn get_file(
+            &self,
+            ctx: &Ctx,
+            file_id: String,
+        ) -> Result<StreamedAnswer, ContentError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/files/{file_id}/tagged\",
+            body = \"stream\",
+            header_out(\"x-checksum\"),
+            error_status(NotFound = 404),
+        ))]
+        async fn get_tagged_file(
+            &self,
+            ctx: &Ctx,
+            file_id: String,
+        ) -> Result<(StreamedAnswer, String), ContentError>;
+    }
+";
+
+/// A service declaring one `body = \"multipart\"` operation: a path placeholder, two scalar
+/// `Generated` fields (one required, one optional) and a `part` binding for the file itself.
+/// Swift-gated mirror of `DART_MULTIPART_HTTP_SERVICE`.
+#[cfg(feature = "swift")]
+const SWIFT_MULTIPART_HTTP_SERVICE: &str = "
+    pub trait UploadClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"POST\",
+            path = \"/folders/{folder_id}/documents\",
+            body = \"multipart\",
+            part(\"file\" = attachment),
+            error_status(TooLarge = 413),
+        ))]
+        async fn upload_document(
+            &self,
+            ctx: &Ctx,
+            folder_id: String,
+            title: String,
+            description: Option<String>,
+            attachment: Box<dyn upload_client_service_schema::BodySource + Send>,
+        ) -> Result<UploadResponse, UploadError>;
+    }
+";
+
+/// Swift-gated mirror of `DART_SINGLE_PLACEHOLDER_HTTP_SERVICE`.
+#[cfg(feature = "swift")]
+const SWIFT_SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
+    pub trait ConversationClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/conversations/{conversation_id}/window\",
+            error_status(NotFound = 404),
+        ))]
+        async fn window(
+            &self,
+            ctx: &Ctx,
+            req: WindowRequest,
+        ) -> Result<WindowPage, WindowError>;
+
+        #[service_schema_op(one_way, http(
+            method = \"DELETE\",
+            path = \"/conversations/{conversation_id}\",
+        ))]
+        async fn purge_conversation(&self, ctx: &Ctx, conversation_id: String);
+    }
+";
+
+/// A reply operation whose success is `()` — nothing rides in the client's success arm. Swift-gated
+/// mirror of `DART_UNIT_SUCCESS_HTTP_SERVICE`.
+#[cfg(feature = "swift")]
+const SWIFT_UNIT_SUCCESS_HTTP_SERVICE: &str = "
+    pub trait PingClientService<Ctx> {
+        #[service_schema_op(http(method = \"POST\", path = \"/v1/ping\"))]
+        async fn ping(&self, ctx: &Ctx, req: PingRequest) -> Result<(), PingError>;
+    }
+";
+
+/// The design's own running example: a reply operation over a `Named` message answering a
+/// declared success or error, and a one-way operation over a branded newtype. Swift-gated, since
+/// it exercises `swift_ws_client()` independent of `zod`/`dart`.
+#[cfg(feature = "swift")]
+const SWIFT_WS_SERVICE: &str = "
+    pub trait ConversationClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/v1/conversations/{conversation_id}/window\",
+            error_status(NotFound = 404),
+        ))]
+        async fn window(&self, ctx: &Ctx, req: WindowRequest) -> Result<WindowPage, WindowError>;
+
+        #[service_schema_op(
+            one_way,
+            http(method = \"DELETE\", path = \"/v1/conversations/{conversation_id}\",)
+        )]
+        async fn purge_conversation(&self, ctx: &Ctx, conversation_id: ConversationId);
+    }
+";
+
+/// A reply operation whose success is `()` — nothing rides in the decoded `Result`'s success arm.
+#[cfg(feature = "swift")]
+const SWIFT_UNIT_SUCCESS_SERVICE: &str = "
+    pub trait PingClientService<Ctx> {
+        #[service_schema_op(http(method = \"POST\", path = \"/v1/ping\"))]
+        async fn ping(&self, ctx: &Ctx, req: PingRequest) -> Result<(), PingError>;
+    }
+";
+
+/// A service declaring a `Vec<Option<String>>` `header_in` binding, to exercise a nested optional
+/// element inside an otherwise-required header. Swift-gated mirror of the Dart suite's own inline
+/// fixture.
+#[cfg(feature = "swift")]
+const SWIFT_HEADER_VEC_OF_OPTIONS_SERVICE: &str = "
+    pub trait TagClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/tags\",
+            header_in(\"x-tags\" = tags),
+        ))]
+        async fn list_tags(
+            &self,
+            ctx: &Ctx,
+            req: ListTagsRequest,
+            tags: Vec<Option<String>>,
+        ) -> Result<ListTagsResponse, ListTagsError>;
+    }
+";
+
+#[cfg(feature = "swift")]
+fn swift_ws_client_of(source: &str) -> String {
+    swift_ws_client::emit(&parsed(source)).join("\n\n")
+}
+
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn client_of(source: &str) -> String {
     client::emit(&parsed(source)).join("\n\n")
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn http_client_of(source: &str) -> String {
     http_client::emit(&parsed(source)).join("\n\n")
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
+fn http_service_of(source: &str) -> String {
+    http_service::emit(&parsed(source)).join("\n\n")
+}
+
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn ws_client_of(source: &str) -> String {
     ws_client::emit(&parsed(source)).join("\n\n")
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn ws_service_of(source: &str) -> String {
     ws_service::emit(&parsed(source)).join("\n\n")
+}
+
+#[cfg(all(feature = "typescript", feature = "zod"))]
+fn ws_server_of(source: &str) -> String {
+    ws_server::emit(&parsed(source)).join("\n\n")
 }
 
 #[cfg(feature = "dart")]
@@ -420,6 +950,26 @@ fn dart_ws_client_of(source: &str) -> String {
     dart_ws_client::emit(&parsed(source)).join("\n\n")
 }
 
+#[cfg(feature = "dart")]
+fn dart_result_of(source: &str) -> Vec<String> {
+    dart_result::emit(&parsed(source))
+}
+
+#[cfg(feature = "swift")]
+fn swift_http_client_of(source: &str) -> String {
+    swift_http_client::emit(&parsed(source)).join("\n\n")
+}
+
+#[cfg(feature = "kotlin")]
+fn kotlin_http_client_of(source: &str) -> String {
+    kotlin_http_client::emit(&parsed(source)).join("\n\n")
+}
+
+#[cfg(feature = "kotlin")]
+fn kotlin_ws_client_of(source: &str) -> String {
+    kotlin_ws_client::emit(&parsed(source)).join("\n\n")
+}
+
 fn parsed(source: &str) -> ServiceDef {
     parse_service(&syn::parse_str::<ItemTrait>(source).unwrap()).unwrap()
 }
@@ -428,11 +978,12 @@ fn registration(source: &str) -> String {
     emit(&parsed(source), false).to_token_stream().to_string()
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn service_of(source: &str) -> String {
     service::emit(&parsed(source)).join("\n\n")
 }
 
+#[cfg(feature = "typescript")]
 #[test]
 fn a_one_way_operation_gets_no_result_type() {
     let published = result::emit(&parsed(MIXED_SERVICE));
@@ -445,6 +996,7 @@ fn a_one_way_operation_gets_no_result_type() {
     );
 }
 
+#[cfg(feature = "typescript")]
 #[test]
 fn every_declared_message_is_registered_with_the_service() {
     let rendered = registration(MIXED_SERVICE);
@@ -474,6 +1026,7 @@ fn the_bundle_line_hangs_off_a_struct_named_for_the_service() {
     );
 }
 
+#[cfg(feature = "typescript")]
 #[test]
 fn the_fault_s_fields_are_asked_for_rather_than_written_here() {
     let rendered = registration(MIXED_SERVICE);
@@ -508,6 +1061,7 @@ fn the_fault_s_fields_are_asked_for_rather_than_written_here() {
 /// This is what TypeScript is given in place of the private fields Rust has. The Rust fault refuses
 /// the literal an implementation would write with `E0451`, and a plain structural object type
 /// refuses nothing at all.
+#[cfg(feature = "typescript")]
 #[test]
 fn the_published_fault_is_the_asked_for_fields_under_a_brand_the_bundle_exports_nowhere() {
     let rendered = registration(MIXED_SERVICE);
@@ -539,6 +1093,7 @@ fn the_published_fault_is_the_asked_for_fields_under_a_brand_the_bundle_exports_
     );
 }
 
+#[cfg(feature = "typescript")]
 #[test]
 fn the_result_joins_the_two_declared_arms_and_adds_nothing_to_either() {
     let published = result::emit(&parsed(MIXED_SERVICE));
@@ -563,7 +1118,7 @@ fn the_result_joins_the_two_declared_arms_and_adds_nothing_to_either() {
 /// `StreamedAnswer` carries no `#[model_schema()]` of its own, so a bare `value: StreamedAnswer`
 /// would publish a TypeScript reference nothing declares. The result type stands in the fixed
 /// streamed record instead.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 #[test]
 fn the_result_answers_the_streamed_record_rather_than_the_undescribable_rust_type() {
     let published = result::emit(&parsed(STREAM_HTTP_SERVICE));
@@ -587,7 +1142,7 @@ fn the_result_answers_the_streamed_record_rather_than_the_undescribable_rust_typ
 
 /// A declared `header_out` wraps the streamed record in a tuple, exactly as the JSON and bytes
 /// paths compose theirs.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 #[test]
 fn the_result_composes_header_out_onto_the_streamed_record_in_a_tuple() {
     let published = result::emit(&parsed(STREAM_HTTP_SERVICE));
@@ -605,6 +1160,7 @@ fn the_result_composes_header_out_onto_the_streamed_record_in_a_tuple() {
     );
 }
 
+#[cfg(feature = "typescript")]
 #[test]
 fn the_result_takes_its_name_from_the_service_and_the_operation() {
     let published = result::emit(&parsed(MIXED_SERVICE));
@@ -630,6 +1186,7 @@ fn the_result_takes_its_name_from_the_service_and_the_operation() {
     );
 }
 
+#[cfg(feature = "typescript")]
 #[test]
 fn two_operations_naming_unrelated_errors_keep_them_apart() {
     let published = result::emit(&parsed(MIXED_SERVICE));
@@ -648,7 +1205,7 @@ fn two_operations_naming_unrelated_errors_keep_them_apart() {
 /// The pair that says a client and a dispatcher are published exactly where their check can be.
 /// This is the half that runs in a build with the Zod surface; the one below it is the same
 /// registration read in a build without it, and neither could pass alone.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 #[test]
 fn a_build_that_publishes_a_schema_publishes_the_client_and_the_dispatcher_that_parse_it() {
     let rendered = registration(MIXED_SERVICE);
@@ -658,11 +1215,12 @@ fn a_build_that_publishes_a_schema_publishes_the_client_and_the_dispatcher_that_
         "pub fn ts_service",
         "pub fn ts_ws_client",
         "pub fn ts_ws_service",
+        "pub fn ts_ws_server",
         "pub fn ts_definition",
     ] {
         assert!(
             rendered.contains(published),
-            "a build with a schema to parse against publishes all six artifacts. \
+            "a build with a schema to parse against publishes all seven artifacts. \
              Got: {rendered}"
         );
     }
@@ -677,7 +1235,7 @@ fn a_build_that_publishes_a_schema_publishes_the_client_and_the_dispatcher_that_
 /// gave it to an implementation entitled to assume it was valid. Both compiled, both read like the
 /// checked ones, and the Rust half of the same service went on validating — so the two halves
 /// disagreed about what they accept and nothing said so.
-#[cfg(not(feature = "zod"))]
+#[cfg(all(feature = "typescript", not(feature = "zod")))]
 #[test]
 fn a_build_that_publishes_no_schema_publishes_no_client_and_no_dispatcher() {
     let rendered = registration(MIXED_SERVICE);
@@ -687,6 +1245,7 @@ fn a_build_that_publishes_no_schema_publishes_no_client_and_no_dispatcher() {
         "pub fn ts_service",
         "pub fn ts_ws_client",
         "pub fn ts_ws_service",
+        "pub fn ts_ws_server",
     ] {
         assert!(
             !rendered.contains(withheld),
@@ -715,14 +1274,17 @@ fn a_build_that_publishes_no_schema_publishes_no_client_and_no_dispatcher() {
 /// The missing methods are the one thing a reader of this build's registry goes looking for, so
 /// the reason they are missing is written on the registry itself rather than left to an
 /// `E0599` naming the method and nothing else.
-#[cfg(not(feature = "zod"))]
+#[cfg(all(feature = "typescript", not(feature = "zod")))]
 #[test]
 fn a_build_that_publishes_no_client_says_on_the_registry_why_not() {
     let rendered = registration(MIXED_SERVICE);
     for said in [
         "This build publishes no `UsageServiceSchema::ts_client()`, no \
-         `UsageServiceSchema::ts_http_client()`, no `UsageServiceSchema::ts_service()`, no \
-         `UsageServiceSchema::ts_ws_client()`, and no `UsageServiceSchema::ts_ws_service()`.",
+         `UsageServiceSchema::ts_http_client()`, no `UsageServiceSchema::ts_http_service()`, no \
+         `UsageServiceSchema::ts_service()`, no `UsageServiceSchema::ts_ws_client()`, no \
+         `UsageServiceSchema::ts_ws_service()`, and no `UsageServiceSchema::ts_ws_server()`.",
+        "The first six parse a message against the schema",
+        "leaves the seven seam artifacts out",
         "only a build with tixschema's `zod` feature writes one",
         "Add `features = [\\\"zod\\\"]` to the tixschema dependency to get them.",
     ] {
@@ -733,10 +1295,33 @@ fn a_build_that_publishes_no_client_says_on_the_registry_why_not() {
     }
 }
 
+/// `ts_http_service()` is withheld for the same reason as `ts_service()`: its dispatcher parses a
+/// message against a schema this build does not write.
+#[cfg(not(feature = "zod"))]
+#[test]
+fn a_build_that_publishes_no_schema_publishes_no_http_service_either() {
+    let rendered = registration(MIXED_SERVICE);
+    assert!(
+        !rendered.contains("pub fn ts_http_service"),
+        "got: {rendered}"
+    );
+}
+
+/// The counterpart of the refusal above, in the build where the accessor exists.
+#[cfg(all(feature = "typescript", feature = "zod"))]
+#[test]
+fn a_build_that_publishes_a_schema_publishes_ts_http_service() {
+    let rendered = registration(MIXED_SERVICE);
+    assert!(
+        rendered.contains("pub fn ts_http_service"),
+        "got: {rendered}"
+    );
+}
+
 /// What the Zod-less build still publishes, and therefore why it is not refused outright: the
 /// message types and the result envelopes describe what the *Rust* dispatcher and client put on the
 /// wire, and that half validates in this build exactly as it does in any other.
-#[cfg(not(feature = "zod"))]
+#[cfg(all(feature = "typescript", not(feature = "zod")))]
 #[test]
 fn a_build_that_publishes_no_client_still_publishes_every_type_the_wire_carries() {
     let rendered = registration(MIXED_SERVICE);
@@ -754,12 +1339,79 @@ fn a_build_that_publishes_no_client_still_publishes_every_type_the_wire_carries(
     }
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 #[test]
 fn a_declared_message_brings_its_schema_along_with_its_type() {
     let rendered = registration(MIXED_SERVICE);
     assert!(
         rendered.contains("ExpireCreditRequest :: zod_schema"),
         "the schema has no registration line of its own either. Got: {rendered}"
+    );
+}
+
+#[cfg(feature = "dart")]
+#[test]
+fn dart_definition_publishes_messages_then_kind_then_fields_then_results() {
+    let rendered = registration(MIXED_SERVICE);
+    let messages = [
+        rendered
+            .find("expire_credit_request_dart :: dart_definition")
+            .unwrap(),
+        rendered
+            .find("sweep_request_dart :: dart_definition")
+            .unwrap(),
+    ];
+    let kind = rendered
+        .find("usage_service_schema :: usage_service_fault_kind_dart :: dart_definition")
+        .unwrap();
+    let fields = rendered
+        .find("usage_service_schema :: usage_service_fault_fields_dart :: dart_definition")
+        .unwrap();
+    let results = rendered
+        .find("sealed class UsageServiceGetAvailableBalanceResult")
+        .unwrap();
+    assert!(
+        messages.iter().all(|&message| message < kind),
+        "got: {rendered}"
+    );
+    assert!(kind < fields, "got: {rendered}");
+    assert!(fields < results, "got: {rendered}");
+}
+
+#[cfg(feature = "dart")]
+#[test]
+fn dart_definition_asks_for_the_generated_messages_a_declared_message_is_registered_by_hand() {
+    let rendered = registration(MIXED_SERVICE);
+    for declared in ["expire_credit_request_dart", "sweep_request_dart"] {
+        assert!(
+            rendered.contains(&format!("{declared} :: dart_definition")),
+            "a message the macro declared reaches the bundle through the service's own line. \
+             Got: {rendered}"
+        );
+    }
+    assert!(
+        !rendered.contains("available_balance_request_dart"),
+        "the message the author declared is registered by the author, not here. Got: {rendered}"
+    );
+}
+
+#[cfg(feature = "kotlin")]
+#[test]
+fn a_build_with_kotlin_publishes_kotlin_http_client() {
+    let rendered = registration(MIXED_SERVICE);
+    assert!(
+        rendered.contains("pub fn kotlin_http_client"),
+        "got: {rendered}"
+    );
+}
+
+#[cfg(not(feature = "kotlin"))]
+#[test]
+fn a_build_without_kotlin_publishes_no_kotlin_http_client() {
+    let rendered = registration(MIXED_SERVICE);
+    assert!(
+        !rendered.contains("kotlin_http_client"),
+        "an artifact behind a feature that is off is absent rather than emitted empty. \
+         Got: {rendered}"
     );
 }

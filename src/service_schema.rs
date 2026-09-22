@@ -69,8 +69,8 @@ pub mod support;
 #[cfg(feature = "serde")]
 pub mod transport;
 
-#[cfg(all(feature = "serde", feature = "typescript"))]
-use crate::features::service_schema::emit as emit_typescript;
+#[cfg(feature = "serde")]
+use crate::features::service_schema::emit as emit_generated_clients;
 use proc_macro2::TokenStream;
 #[cfg(feature = "serde")]
 use quote::quote;
@@ -135,15 +135,15 @@ pub fn exec_service_schema(args: TokenStream, input: TokenStream) -> TokenStream
                     // compiled items, so they stay at the trait's scope; `#[macro_export]` hoists
                     // each name to the crate root from wherever the service was written.
                     let transports = transport::emit(&service, &wanted.transports);
-                    // The TypeScript artifacts are strings rather than callers of anything
-                    // private, so they stay at the trait's scope where a bundle can name them.
-                    let typescript = typescript(&service, wanted.non_exhaustive);
+                    // Every language's generated clients are strings rather than callers of
+                    // anything private, so they stay at the trait's scope.
+                    let generated_clients = generated_clients(&service, wanted.non_exhaustive);
                     quote! {
                         #messages
                         #support
                         #contract
                         #transports
-                        #typescript
+                        #generated_clients
                     }
                 },
                 // Caught here, ahead of every transport's own macros, rather than left for
@@ -670,16 +670,11 @@ fn emitted_trait(declared: &ItemTrait) -> ItemTrait {
     emitted
 }
 
-/// The service's TypeScript, which only a build that writes TypeScript at all has anything to say
-/// for.
-#[cfg(all(feature = "serde", feature = "typescript"))]
-fn typescript(service: &parse::ServiceDef, non_exhaustive: bool) -> TokenStream {
-    emit_typescript(service, non_exhaustive)
-}
-
-#[cfg(all(feature = "serde", not(feature = "typescript")))]
-fn typescript(_service: &parse::ServiceDef, _non_exhaustive: bool) -> TokenStream {
-    TokenStream::new()
+/// `typescript`, `dart`, `swift` and `kotlin` each gate their own accessors independently inside
+/// [`emit_generated_clients`], so this wrapper needs only `serde`.
+#[cfg(feature = "serde")]
+fn generated_clients(service: &parse::ServiceDef, non_exhaustive: bool) -> TokenStream {
+    emit_generated_clients(service, non_exhaustive)
 }
 
 #[cfg(test)]

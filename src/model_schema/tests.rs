@@ -41,11 +41,16 @@ use super::tuple_struct_json_body;
 #[cfg(any(feature = "typescript", feature = "zod", feature = "jsonschema"))]
 use super::{check_slot_wire_is_readable, tuple_struct_shape};
 
+#[cfg(feature = "swift")]
+use super::swift_width_refusals;
+
 use super::{
     VariantKind, check_variant_slot_wire_is_readable, parse_serde_key_omission, variant_wire_kind,
 };
 
 use syn::spanned::Spanned as _;
+
+use crate::utils::{is_recorded_untagged_enum, record_untagged_enum};
 
 /// The variants of [`rendered_discriminated_union`]'s enum, in the order they are declared.
 const DECLARED_VARIANTS: [&str; 6] = ["Upload", "Generate", "Delete", "Rename", "Move", "Archive"];
@@ -922,7 +927,7 @@ fn untagged_member_prop_guards_apply() {
             "requires an Option<T> field",
         ),
         (
-            quote::quote! { #[model_schema_prop(as = String)] name: u64 },
+            quote::quote! { #[model_schema_prop(as = String)] name: i64 },
             "as = String",
         ),
     ] {
@@ -1899,6 +1904,55 @@ fn field_map_key_error(field_type: &proc_macro2::TokenStream) -> String {
     check_map_key(field, &field_def, &field_label("counts"))
         .err()
         .map_or_else(String::new, |err| err.to_compile_error().to_string())
+}
+
+/// A `u64` or `usize` field is refused for Swift; `i64` earns nothing.
+#[cfg(feature = "swift")]
+#[test]
+fn a_u64_or_usize_field_is_refused_for_swift() {
+    let item: syn::Item = syn::parse_quote! {
+        struct Report {
+            count: u64,
+        }
+    };
+    let tokens = swift_width_refusals(&item)
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(tokens.contains("compile_error"), "got: {tokens}");
+    assert!(
+        tokens.contains(
+            "model_schema: field `count`: `u64` has no Swift mapping; the Swift target refuses \
+             unsigned 64-bit and pointer-sized integers"
+        ),
+        "got: {tokens}"
+    );
+
+    let usize_item: syn::Item = syn::parse_quote! {
+        struct Report {
+            total: usize,
+        }
+    };
+    let usize_tokens = swift_width_refusals(&usize_item)
+        .into_iter()
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        usize_tokens.contains(
+            "field `total`: `usize` has no Swift mapping; the Swift target refuses unsigned \
+             64-bit and pointer-sized integers"
+        ),
+        "got: {usize_tokens}"
+    );
+
+    let i64_item: syn::Item = syn::parse_quote! {
+        struct Report {
+            count: i64,
+        }
+    };
+    assert!(swift_width_refusals(&i64_item).is_empty());
 }
 
 /// The registry proves a struct-keyed map has no members to name, and it proves it whatever surface
@@ -3524,6 +3578,50 @@ fn the_constraint_docs_are_silent_for_a_parameter_typed_field() {
     );
 }
 
+/// `u64` and `usize` have no Kotlin mapping, refused the same way Swift's own width refusal is.
+#[cfg(feature = "kotlin")]
+#[test]
+fn a_kotlin_field_reaching_u64_or_usize_is_refused() {
+    for (ty, width) in [
+        (quote::quote! { u64 }, "u64"),
+        (quote::quote! { usize }, "usize"),
+        (quote::quote! { Vec<u64> }, "u64"),
+        (quote::quote! { HashMap<String, usize> }, "usize"),
+        (quote::quote! { (String, u64) }, "u64"),
+    ] {
+        let errors = field_prop_guard_errors(&syn::parse_quote! {
+            struct Report {
+                count: #ty,
+            }
+        });
+        assert_eq!(errors.len(), 1, "for {ty}: {errors:?}");
+        let message = format!(
+            "field `count`: `{width}` has no Kotlin mapping; the Kotlin target refuses unsigned \
+             64-bit and pointer-sized integers"
+        );
+        assert!(
+            errors[0].contains(&message),
+            "for {ty}, expected {message:?}, got: {}",
+            errors[0]
+        );
+    }
+}
+
+/// A field written at one of the enclosing item's own type parameters is never refused.
+#[cfg(feature = "kotlin")]
+#[test]
+fn a_kotlin_type_parameter_is_never_refused_even_when_it_could_be_filled_with_u64() {
+    let errors = field_prop_guard_errors_in_scope(
+        &syn::parse_quote! {
+            struct Wrapper<T> {
+                value: T,
+            }
+        },
+        &["T".to_owned()],
+    );
+    assert_eq!(errors.len(), 0, "got: {errors:?}");
+}
+
 /// `as` names the type the field already renders or it names nothing the expansion can honor: the
 /// surfaces are written from the declared type, and no second reading of the wire exists here.
 #[test]
@@ -3531,11 +3629,11 @@ fn an_as_naming_another_type_is_refused() {
     let errors = field_prop_guard_errors(&syn::parse_quote! {
         struct Report {
             #[model_schema_prop(as = String)]
-            id: u64,
+            id: i64,
         }
     });
     assert_eq!(errors.len(), 1, "got: {errors:?}");
-    for needle in ["compile_error", "field `id`", "as = String", "u64"] {
+    for needle in ["compile_error", "field `id`", "as = String", "i64"] {
         assert!(
             errors[0].contains(needle),
             "{needle} missing: {}",
@@ -4109,6 +4207,7 @@ fn plain_enum_ts_definition_carries_no_cfg_attribute() {
         "Status",
         "",
         "  'a'",
+        "export function Status$Variant(value: unknown): string { return \"\"; }",
     );
     assert_no_cfg_attribute(&tokens, "generate_plain_enum_ts_definition_method");
 }
@@ -4117,7 +4216,12 @@ fn plain_enum_ts_definition_carries_no_cfg_attribute() {
 #[test]
 fn discriminated_enum_ts_definition_carries_no_cfg_attribute() {
     let tokens = super::generate_discriminated_enum_ts_definition_method(
-        " * Shape", "Shape", "Shape", "", "  'a'",
+        " * Shape",
+        "Shape",
+        "Shape",
+        "",
+        "  'a'",
+        "export function Shape$Variant(value: unknown): string { return \"\"; }",
     );
     assert_no_cfg_attribute(&tokens, "generate_discriminated_enum_ts_definition_method");
 }
@@ -12092,4 +12196,14 @@ fn a_field_bottoming_out_in_a_declared_type_is_walked_and_a_primitive_one_is_not
              run there. Got: {walks}"
         );
     }
+}
+
+#[test]
+fn untagged_enum_registry_answers_only_after_the_enum_is_recorded() {
+    let declared_below: syn::Type = syn::parse_quote!(UntaggedEnumRegistryProbeBelow);
+    assert!(!is_recorded_untagged_enum(&declared_below));
+
+    record_untagged_enum("UntaggedEnumRegistryProbeAbove");
+    let declared_above: syn::Type = syn::parse_quote!(UntaggedEnumRegistryProbeAbove);
+    assert!(is_recorded_untagged_enum(&declared_above));
 }

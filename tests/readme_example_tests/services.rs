@@ -352,7 +352,9 @@ fn the_dispatcher_factory_is_shown_with_the_signature_it_is_emitted_under() {
         &UsageServiceSchema::ts_service(),
         "export function createUsageServiceDispatcher<Ctx>(\n  \
          impl: UsageServiceImpl<Ctx>,\n\
-         ): (ctx: Ctx, operation: string, payload: unknown) => Promise<unknown> {",
+         ): (ctx: Ctx, operation: string, payload: unknown, headers?: ReadonlyArray<readonly \
+         [string, string]>, parts?: ReadonlyArray<readonly [string, unknown]>) => \
+         Promise<unknown> {",
     );
 }
 

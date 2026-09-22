@@ -122,6 +122,12 @@ use crate::utils::json_argument_binding;
 #[cfg(feature = "dart")]
 use crate::features::dart::dart_schema_dispatch;
 
+#[cfg(feature = "swift")]
+use crate::features::swift::{refuses_swift, swift_schema_dispatch};
+
+#[cfg(feature = "kotlin")]
+use crate::features::kotlin::{kotlin_refused_width, kotlin_schema_dispatch};
+
 #[cfg(any(
     feature = "typescript",
     feature = "zod",
@@ -158,7 +164,9 @@ use crate::utils::record_ts_union_members;
 
 #[cfg(any(feature = "typescript", feature = "zod", feature = "jsonschema"))]
 use crate::utils::register_alias_info;
-use crate::utils::{is_wire_scalar_type, record_wire_scalar};
+use crate::utils::{
+    is_recorded_untagged_enum, is_wire_scalar_type, record_untagged_enum, record_wire_scalar,
+};
 
 #[cfg(feature = "serde")]
 use crate::utils::to_snake_case;
@@ -1108,6 +1116,7 @@ pub fn exec_model_schema(args: TokenStream, input: TokenStream) -> TokenStream {
     }
     // Read in every feature combination: a transport reads it whether or not a surface is on.
     record_wire_scalar_item(&item);
+    record_untagged_enum_item(&item);
     // A `default_types` declaration is read against the item's own parameters, which the parser
     // never sees, so both directions are answered here — ahead of every shape, and of the branded
     // split inside the struct path.
@@ -1190,8 +1199,13 @@ pub fn exec_model_schema(args: TokenStream, input: TokenStream) -> TokenStream {
     // other three surfaces share (a Dart class has no forward-reference or cycle problem to solve,
     // unlike a JavaScript module's top-to-bottom `const` evaluation, so it carries no factory-cache
     // or `z.lazy`-style deferral of its own to wire in).
-    #[cfg(feature = "dart")]
-    let dart_tokens = dart_schema_dispatch(&item, parsed_args.name_override.as_deref());
+    let dart_tokens = dart_suffix_tokens(&item, parsed_args.name_override.as_deref());
+    // Same independence as the Dart tokens above; the refusal walks the item's own fields ahead
+    // of the move too, since it names each one by its declared type.
+    let swift_tokens = swift_suffix_tokens(&item, parsed_args.name_override.as_deref());
+    let swift_refusals = swift_width_refusals(&item);
+    // Same independence as the Dart and Swift tokens above.
+    let kotlin_tokens = kotlin_suffix_tokens(&item, parsed_args.name_override.as_deref());
     let expanded = if let Item::Struct(item_struct) = item {
         process_struct(item_struct, &parsed_args)
     } else if let Item::Enum(item_enum) = item {
@@ -1207,14 +1221,44 @@ pub fn exec_model_schema(args: TokenStream, input: TokenStream) -> TokenStream {
     };
     let deferred = with_prefixed_tokens(expanded, &deferred_shape_refusals(registering.as_ref()));
     let bound = with_prefixed_tokens(deferred, &filling_bound_checks);
-    #[cfg(feature = "dart")]
-    {
-        quote! { #bound #dart_tokens }
-    }
-    #[cfg(not(feature = "dart"))]
-    {
-        bound
-    }
+    let width_checked = with_prefixed_tokens(bound, &swift_refusals);
+    quote! { #width_checked #dart_tokens #swift_tokens #kotlin_tokens }
+}
+
+/// The Dart tokens `item` earns, or nothing without the `dart` feature — always callable, so the
+/// tokens that follow the item's own expansion never need a `#[cfg]`-gated `let` of their own.
+#[cfg(feature = "dart")]
+fn dart_suffix_tokens(item: &Item, name_override: Option<&str>) -> TokenStream {
+    dart_schema_dispatch(item, name_override)
+}
+
+#[cfg(not(feature = "dart"))]
+fn dart_suffix_tokens(_item: &Item, _name_override: Option<&str>) -> TokenStream {
+    TokenStream::new()
+}
+
+/// The Swift tokens `item` earns, or nothing without the `swift` feature — the same always-
+/// callable shape as [`dart_suffix_tokens`].
+#[cfg(feature = "swift")]
+fn swift_suffix_tokens(item: &Item, name_override: Option<&str>) -> TokenStream {
+    swift_schema_dispatch(item, name_override)
+}
+
+#[cfg(not(feature = "swift"))]
+fn swift_suffix_tokens(_item: &Item, _name_override: Option<&str>) -> TokenStream {
+    TokenStream::new()
+}
+
+/// The Kotlin tokens `item` earns, or nothing without the `kotlin` feature — the same always-
+/// callable shape as [`dart_suffix_tokens`].
+#[cfg(feature = "kotlin")]
+fn kotlin_suffix_tokens(item: &Item, name_override: Option<&str>) -> TokenStream {
+    kotlin_schema_dispatch(item, name_override)
+}
+
+#[cfg(not(feature = "kotlin"))]
+fn kotlin_suffix_tokens(_item: &Item, _name_override: Option<&str>) -> TokenStream {
+    TokenStream::new()
 }
 
 /// Classifies what an alias resolves to, for the registry.
@@ -1358,6 +1402,27 @@ fn has_serde_transparent(attrs: &[syn::Attribute]) -> bool {
             let mut found = false;
             let _: syn::Result<()> = attr.parse_nested_meta(|nested| {
                 if nested.path.is_ident("transparent") {
+                    found = true;
+                }
+                Ok(())
+            });
+            if found {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Whether `attrs` carries `#[serde(untagged)]`, read off the raw tokens rather than through
+/// [`parse_serde_type_attributes`] — [`record_untagged_enum_item`] feeds a registry that has to
+/// answer the same way in every feature combination.
+fn has_serde_untagged(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if attr.path().is_ident("serde") {
+            let mut found = false;
+            let _: syn::Result<()> = attr.parse_nested_meta(|nested| {
+                if nested.path.is_ident("untagged") {
                     found = true;
                 }
                 Ok(())
@@ -3218,6 +3283,125 @@ const fn deferred_shape_refusals(
     Vec::new()
 }
 
+/// Every named field, tuple slot and (for an alias) target type an item declares, with the label
+/// its own refusal message names it by — [`field_label`] for a struct or enum-variant field,
+/// [`item_label`] for an alias's own target.
+#[cfg(feature = "swift")]
+fn swift_scanned_fields(item: &Item) -> Vec<(String, &syn::Type)> {
+    if let Item::Struct(item_struct) = item {
+        let mut found = Vec::new();
+        collect_swift_scanned_fields(&item_struct.fields, &mut found);
+        found
+    } else if let Item::Enum(item_enum) = item {
+        let mut found = Vec::new();
+        for variant in &item_enum.variants {
+            collect_swift_scanned_fields(&variant.fields, &mut found);
+        }
+        found
+    } else if let Item::Type(item_type) = item {
+        vec![(item_label(item), &item_type.ty)]
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(feature = "swift")]
+fn collect_swift_scanned_fields<'item>(
+    fields: &'item syn::Fields,
+    found: &mut Vec<(String, &'item syn::Type)>,
+) {
+    match fields {
+        syn::Fields::Named(named) => {
+            for field in &named.named {
+                let raw_name = field
+                    .ident
+                    .as_ref()
+                    .map_or_else(String::new, ToString::to_string);
+                found.push((field_label(&raw_name), &field.ty));
+            }
+        }
+        syn::Fields::Unit => {}
+        syn::Fields::Unnamed(unnamed) => {
+            for field in &unnamed.unnamed {
+                found.push((field_label(""), &field.ty));
+            }
+        }
+    }
+}
+
+/// The refused primitive `field_def`, or anything it directly contains (a map's key or value, a
+/// tuple's slots, a generic argument), names — `None` where nothing under it is a `u64` or
+/// `usize`. [`refuses_swift`] answers only for one `FieldDef`'s own type; this walks every one.
+#[cfg(feature = "swift")]
+fn swift_refused_primitive_name(field_def: &FieldDef) -> Option<&'static str> {
+    if refuses_swift(field_def) {
+        return Some(if matches!(field_def.field_type, FieldDefType::Usize) {
+            "usize"
+        } else {
+            "u64"
+        });
+    }
+    match &field_def.field_type {
+        FieldDefType::Map(key, value) => {
+            swift_refused_primitive_name(key).or_else(|| swift_refused_primitive_name(value))
+        }
+        FieldDefType::SiblingType(_, arguments) => {
+            arguments.iter().find_map(swift_refused_primitive_name)
+        }
+        FieldDefType::Tuple(elements) => elements.iter().find_map(swift_refused_primitive_name),
+        FieldDefType::Boolean
+        | FieldDefType::BooleanLiteral(_)
+        | FieldDefType::Char
+        | FieldDefType::F32
+        | FieldDefType::F64
+        | FieldDefType::I16
+        | FieldDefType::I32
+        | FieldDefType::I64
+        | FieldDefType::I8
+        | FieldDefType::Isize
+        | FieldDefType::NumberLiteral(_)
+        | FieldDefType::String
+        | FieldDefType::StringLiteral(_)
+        | FieldDefType::TypeParam(_)
+        | FieldDefType::U16
+        | FieldDefType::U32
+        | FieldDefType::U64
+        | FieldDefType::U8
+        | FieldDefType::Unknown
+        | FieldDefType::Usize => None,
+        #[cfg(feature = "object_id")]
+        FieldDefType::ObjectId => None,
+        #[cfg(feature = "chrono")]
+        FieldDefType::DateTime
+        | FieldDefType::NaiveDate
+        | FieldDefType::NaiveDateTime
+        | FieldDefType::NaiveTime => None,
+    }
+}
+
+/// The `compile_error!` tokens an item earns for a `u64` or `usize` field, under `swift` — one
+/// per declared field or slot that names one anywhere in its type, spanned on that declared type.
+#[cfg(feature = "swift")]
+fn swift_width_refusals(item: &Item) -> Vec<proc_macro2::TokenStream> {
+    swift_scanned_fields(item)
+        .into_iter()
+        .filter_map(|(label, ty)| {
+            let field_def = get_field_def("", ty, "");
+            let refused = swift_refused_primitive_name(&field_def)?;
+            let message = format!(
+                "{label}: `{refused}` has no Swift mapping; the Swift target refuses unsigned \
+                 64-bit and pointer-sized integers"
+            );
+            Some(syn::Error::new_spanned(ty, prefixed_guard_message(&message)).to_compile_error())
+        })
+        .collect()
+}
+
+#[cfg(not(feature = "swift"))]
+const fn swift_width_refusals(_item: &Item) -> Vec<proc_macro2::TokenStream> {
+    Vec::new()
+}
+
 /// How a constrained brand over a name the registry proves publishes no string is refused, in the
 /// one wording both orders of the two declarations reach it by.
 #[cfg(any(feature = "typescript", feature = "zod", feature = "jsonschema"))]
@@ -3796,6 +3980,23 @@ fn record_wire_scalar_item(item: &Item) {
     };
     if is_wire_scalar_type(inner) {
         record_wire_scalar(&name.to_string());
+    }
+}
+
+/// Records `item` where it is an enum declared `#[serde(untagged)]`, or an alias of one, for
+/// [`is_recorded_untagged_enum`](crate::utils::is_recorded_untagged_enum) to answer a later
+/// item's own refusal. Alias transitivity: `type MyError = SomeUntaggedEnum;` is untagged too.
+fn record_untagged_enum_item(item: &Item) {
+    if let Item::Enum(item_enum) = item {
+        if has_serde_untagged(&item_enum.attrs) {
+            record_untagged_enum(&item_enum.ident.to_string());
+        }
+        return;
+    }
+    if let Item::Type(item_type) = item
+        && is_recorded_untagged_enum(&item_type.ty)
+    {
+        record_untagged_enum(&item_type.ident.to_string());
     }
 }
 
@@ -5787,6 +5988,191 @@ fn build_plain_enum_type_code(enum_options: &[String], enum_variant_docs: &[Stri
         .join("\n")
 }
 
+/// The `case "wire": return "Rust";` arms a `{Enum}$Variant` reader switches over, one per
+/// variant.
+#[cfg(feature = "typescript")]
+fn variant_reader_case_arms(pairs: &[(String, String)]) -> String {
+    pairs
+        .iter()
+        .map(|(wire, rust)| format!("    case \"{wire}\": return \"{rust}\";"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The `{Enum}$Variant` reader for a unit-only enum with no tag: the value itself is the wire
+/// name.
+#[cfg(feature = "typescript")]
+fn plain_enum_variant_reader(item_name: &str, pairs: &[(String, String)]) -> String {
+    format!(
+        "/** The Rust variant name `value` carries, or \"\" where it carries none. */\n\
+         export function {item_name}$Variant(value: unknown): string {{\n  switch (value) {{\n{}\n    default: return \"\";\n  }}\n}}",
+        variant_reader_case_arms(pairs)
+    )
+}
+
+/// The `(wire name, Rust name)` pairs a unit-only enum's own reader switches on, one per variant.
+#[cfg(feature = "typescript")]
+fn plain_enum_reader_pairs(
+    item_enum: &syn::ItemEnum,
+    rename_all: Option<&str>,
+) -> Vec<(String, String)> {
+    item_enum
+        .variants
+        .iter()
+        .map(|variant| {
+            #[cfg(feature = "serde")]
+            let field_rename = parse_serde_field_attributes(&variant.attrs).rename;
+            #[cfg(not(feature = "serde"))]
+            let field_rename: Option<String> = None;
+            let rust_ident = variant.ident.to_string();
+            let wire_name =
+                get_final_variant_name(&rust_ident, field_rename.as_deref(), rename_all);
+            (wire_name, rust_ident)
+        })
+        .collect()
+}
+
+/// The `{Enum}$Variant` reader for an internally or adjacently tagged enum: the wire name sits
+/// under the tag key, whatever else the value carries beside it.
+#[cfg(feature = "typescript")]
+fn tagged_enum_variant_reader(
+    item_name: &str,
+    tag_name: &str,
+    pairs: &[(String, String)],
+) -> String {
+    let key = ts_member_key(tag_name);
+    let read = if key.starts_with('"') {
+        format!("(value as Record<string, unknown>)[{key}]")
+    } else {
+        format!("(value as {{ {key}?: unknown }}).{key}")
+    };
+    format!(
+        "/** The Rust variant name `value` carries, or \"\" where it carries none. */\n\
+         export function {item_name}$Variant(value: unknown): string {{\n  if (typeof value !== \"object\" || value === null) return \"\";\n  switch ({read}) {{\n{}\n    default: return \"\";\n  }}\n}}",
+        variant_reader_case_arms(pairs)
+    )
+}
+
+/// The `{Enum}$Variant` reader for an externally tagged enum: a payload variant writes the wire
+/// name as the object's sole key, a unit variant as a bare string.
+#[cfg(all(feature = "typescript", feature = "serde"))]
+fn externally_tagged_enum_variant_reader(item_name: &str, pairs: &[(String, String)]) -> String {
+    format!(
+        "/** The Rust variant name `value` carries, or \"\" where it carries none. */\n\
+         export function {item_name}$Variant(value: unknown): string {{\n  const key = typeof value === \"string\" ? value\n    : typeof value === \"object\" && value !== null && Object.keys(value).length === 1 ? Object.keys(value)[0]\n    : undefined;\n  switch (key) {{\n{}\n    default: return \"\";\n  }}\n}}",
+        variant_reader_case_arms(pairs)
+    )
+}
+
+/// The `{Enum}$Variant` reader for an untagged enum: no serde form carries the variant's own name,
+/// so there is nothing to read.
+#[cfg(all(feature = "typescript", feature = "serde"))]
+fn untagged_enum_variant_reader(item_name: &str) -> String {
+    format!(
+        "/** The Rust variant name `value` carries, or \"\" where it carries none. */\n\
+         export function {item_name}$Variant(_value: unknown): string {{\n  return \"\";\n}}"
+    )
+}
+
+/// The `(wire name, Rust name)` pairs a discriminated enum's own reader switches on, one per
+/// variant — computed straight off the declaration, which is all the reader needs.
+#[cfg(feature = "typescript")]
+fn discriminated_variant_reader_pairs(
+    item_enum: &syn::ItemEnum,
+    casing: EnumCasing<'_>,
+) -> Vec<(String, String)> {
+    item_enum
+        .variants
+        .iter()
+        .map(|variant| {
+            let (field_rename, _) = variant_serde_names(&variant.attrs, casing.variant_fields);
+            let rust_ident = variant.ident.to_string();
+            let wire_name =
+                get_final_variant_name(&rust_ident, field_rename.as_deref(), casing.variants);
+            (wire_name, rust_ident)
+        })
+        .collect()
+}
+
+/// The plain-enum `ts_definition()` method, its `{Enum}$Variant` reader computed and appended in
+/// one call — kept off `process_plain_enum` so that function stays under the line lint.
+#[cfg(feature = "typescript")]
+fn plain_enum_ts_definition_method(
+    docs: &str,
+    item_name: &str,
+    type_code: &str,
+    item_enum: &syn::ItemEnum,
+    rename_all: Option<&str>,
+) -> proc_macro2::TokenStream {
+    let rust_ident = item_enum.ident.to_string();
+    let ts_generics = ts_generic_params(&item_enum.generics);
+    let reader =
+        plain_enum_variant_reader(item_name, &plain_enum_reader_pairs(item_enum, rename_all));
+    generate_plain_enum_ts_definition_method(
+        docs,
+        item_name,
+        &rust_ident,
+        &ts_generics,
+        type_code,
+        &reader,
+    )
+}
+
+/// The internally- or adjacently-tagged `ts_definition()` method, its reader computed and appended
+/// in one call — kept off the two `process_*` functions that call it so they stay under the line
+/// lint.
+#[cfg(feature = "typescript")]
+fn tagged_ts_definition_method(
+    docs: &str,
+    item_name: &str,
+    type_code: &str,
+    tag_name: &str,
+    item_enum: &syn::ItemEnum,
+    casing: EnumCasing<'_>,
+) -> proc_macro2::TokenStream {
+    let rust_ident = item_enum.ident.to_string();
+    let ts_generics = ts_generic_params(&item_enum.generics);
+    let reader = tagged_enum_variant_reader(
+        item_name,
+        tag_name,
+        &discriminated_variant_reader_pairs(item_enum, casing),
+    );
+    generate_discriminated_enum_ts_definition_method(
+        docs,
+        item_name,
+        &rust_ident,
+        &ts_generics,
+        type_code,
+        &reader,
+    )
+}
+
+/// The externally-tagged `ts_definition()` method, its reader computed and appended in one call —
+/// kept off `process_externally_tagged_enum` so that function stays under the line lint.
+#[cfg(all(feature = "typescript", feature = "serde"))]
+fn externally_tagged_ts_definition_method(
+    docs: &str,
+    item_name: &str,
+    type_code: &str,
+    item_enum: &syn::ItemEnum,
+    casing: EnumCasing<'_>,
+) -> proc_macro2::TokenStream {
+    let rust_ident = item_enum.ident.to_string();
+    let ts_generics = ts_generic_params(&item_enum.generics);
+    let reader = externally_tagged_enum_variant_reader(
+        item_name,
+        &discriminated_variant_reader_pairs(item_enum, casing),
+    );
+    generate_discriminated_enum_ts_definition_method(
+        docs,
+        item_name,
+        &rust_ident,
+        &ts_generics,
+        type_code,
+        &reader,
+    )
+}
+
 /// Processes a plain enum (simple string enum in TypeScript) and generates its definitions.
 fn process_plain_enum(
     mut item_enum: syn::ItemEnum,
@@ -5804,7 +6190,7 @@ fn process_plain_enum(
         AliasKind::EnumMembers,
         Surface::enumerated(),
     );
-    #[cfg(any(feature = "typescript", feature = "zod"))]
+    #[cfg(feature = "zod")]
     let rust_ident = name.to_string();
 
     #[cfg(any(feature = "typescript", feature = "zod"))]
@@ -5836,12 +6222,12 @@ fn process_plain_enum(
     let json_schema_method = generate_plain_enum_json_schema_method(&enumerated, item_name, &[]);
 
     #[cfg(feature = "typescript")]
-    let ts_definition_method = generate_plain_enum_ts_definition_method(
+    let ts_definition_method = plain_enum_ts_definition_method(
         &docs_and_description.0,
         item_name,
-        &rust_ident,
-        &ts_generic_params(&item_enum.generics),
         &type_code,
+        &item_enum,
+        rename_all,
     );
 
     // Schema module emits zod_schema without examples; example injection happens in the delegating
@@ -6341,13 +6727,8 @@ fn process_discriminated_enum(
         enum_json_schema_methods(&main_schema_code, item_name, &item_enum.generics, args);
 
     #[cfg(feature = "typescript")]
-    let ts_definition_method = generate_discriminated_enum_ts_definition_method(
-        &docs,
-        item_name,
-        &name.to_string(),
-        &ts_generic_params(&item_enum.generics),
-        &type_code,
-    );
+    let ts_definition_method =
+        tagged_ts_definition_method(&docs, item_name, &type_code, tag_name, &item_enum, casing);
 
     // Schema module emits zod_schema without examples; example injection happens in the delegating
     // method on the type to avoid `super::` resolution issues.
@@ -6877,13 +7258,8 @@ fn process_externally_tagged_enum(
         enum_json_schema_methods(&main_schema_code, item_name, &item_enum.generics, args);
 
     #[cfg(feature = "typescript")]
-    let ts_definition_method = generate_discriminated_enum_ts_definition_method(
-        &docs,
-        item_name,
-        &name.to_string(),
-        &ts_generic_params(&item_enum.generics),
-        &type_code,
-    );
+    let ts_definition_method =
+        externally_tagged_ts_definition_method(&docs, item_name, &type_code, &item_enum, casing);
 
     #[cfg(feature = "zod")]
     let zod_schema_method = generate_discriminated_enum_zod_schema_method(
@@ -7287,13 +7663,8 @@ fn process_internally_tagged_enum(
         enum_json_schema_methods(&main_schema_code, item_name, &item_enum.generics, args);
 
     #[cfg(feature = "typescript")]
-    let ts_definition_method = generate_discriminated_enum_ts_definition_method(
-        &docs,
-        item_name,
-        &name.to_string(),
-        &ts_generic_params(&item_enum.generics),
-        &type_code,
-    );
+    let ts_definition_method =
+        tagged_ts_definition_method(&docs, item_name, &type_code, tag_name, &item_enum, casing);
 
     #[cfg(feature = "zod")]
     let zod_schema_method = generate_discriminated_enum_zod_schema_method(
@@ -8279,12 +8650,16 @@ fn build_untagged_schema_impl_items(
         enum_json_schema_methods(&main_schema_code, item_name, &item_enum.generics, args);
 
     #[cfg(feature = "typescript")]
+    let variant_reader = untagged_enum_variant_reader(item_name);
+
+    #[cfg(feature = "typescript")]
     let ts_definition_method = generate_discriminated_enum_ts_definition_method(
         &docs,
         item_name,
         &item_enum.ident.to_string(),
         &ts_generic_params(&item_enum.generics),
         &type_code,
+        &variant_reader,
     );
 
     #[cfg(feature = "zod")]
@@ -10938,6 +11313,32 @@ fn validate_as_number_flag(field_type: &FieldDefType, flag_set: bool) -> Result<
     Ok(())
 }
 
+/// `as_number` promises every surface an epoch-milliseconds number; this is the serde hook that
+/// makes the Rust side keep that promise. Held back where the author already reads the field
+/// through a hook of their own, which serde admits only one of.
+#[cfg(all(feature = "serde", feature = "chrono"))]
+fn as_number_serde_hook(field: &Field, field_def: &FieldDef) -> Option<syn::Attribute> {
+    let as_number = field_def
+        .model_schema_prop_meta
+        .as_ref()
+        .is_some_and(|meta| meta.as_number);
+    if !as_number || has_serde_read_hook(&field.attrs) {
+        return None;
+    }
+    let module = if field_def.is_optional() {
+        "chrono::serde::ts_milliseconds_option"
+    } else {
+        "chrono::serde::ts_milliseconds"
+    };
+    let path_lit = syn::LitStr::new(module, proc_macro2::Span::call_site());
+    Some(syn::parse_quote! { #[serde(with = #path_lit)] })
+}
+
+#[cfg(all(feature = "serde", not(feature = "chrono")))]
+const fn as_number_serde_hook(_field: &Field, _field_def: &FieldDef) -> Option<syn::Attribute> {
+    None
+}
+
 /// Rejects `ts_optional` where the member has no key for it to make optional. A positional slot
 /// writes no key at all, and one a serde attribute takes out of both of serde's directions is
 /// described on no surface, so on either the flag asks for a spelling nothing emits.
@@ -11151,11 +11552,19 @@ fn collect_field_guard_errors(
     #[cfg(not(any(feature = "typescript", feature = "zod", feature = "jsonschema")))]
     let map_key_error: Option<proc_macro2::TokenStream> = None;
 
+    #[cfg(feature = "kotlin")]
+    let kotlin_width_error = check_kotlin_width_field(field, field_def, &label)
+        .err()
+        .map(|err| err.to_compile_error());
+    #[cfg(not(feature = "kotlin"))]
+    let kotlin_width_error: Option<proc_macro2::TokenStream> = None;
+
     check_undescribable_std_field(field, field_def, &label)
         .err()
         .map(|err| err.to_compile_error())
         .into_iter()
         .chain(map_key_error)
+        .chain(kotlin_width_error)
         .chain(model_schema_prop_guard_errors(
             field,
             field_def,
@@ -11165,6 +11574,27 @@ fn collect_field_guard_errors(
         ))
         .chain(serde_guard_errors)
         .collect()
+}
+
+/// Rejects a field that reaches `u64` or `usize` at any depth, under the `kotlin` feature. Kotlin
+/// has a `ULong` that could carry `u64`; the refusal exists instead for parity with the Swift
+/// target, which refuses the same two widths.
+#[cfg(feature = "kotlin")]
+fn check_kotlin_width_field(
+    field: &Field,
+    field_def: &FieldDef,
+    label: &str,
+) -> Result<(), syn::Error> {
+    let Some(width) = kotlin_refused_width(field_def) else {
+        return Ok(());
+    };
+    Err(syn::Error::new_spanned(
+        field,
+        prefixed_guard_message(&format!(
+            "{label}: `{width}` has no Kotlin mapping; the Kotlin target refuses unsigned 64-bit \
+             and pointer-sized integers"
+        )),
+    ))
 }
 
 /// Every guard the field's `model_schema_prop` attribute earns: what the parser refused, then an
@@ -11613,6 +12043,11 @@ fn process_field(
             None => hook,
         });
         injected_attrs.extend(attrs);
+    }
+
+    #[cfg(feature = "serde")]
+    if let Some(attr) = as_number_serde_hook(field, &field_def) {
+        injected_attrs.push(attr);
     }
 
     deferred_attrs.push(injected_attrs);
@@ -12913,6 +13348,7 @@ fn generate_plain_enum_ts_definition_method(
     rust_ident: &str,
     ts_generics: &str,
     type_code: &str,
+    variant_reader: &str,
 ) -> proc_macro2::TokenStream {
     #[cfg(feature = "typescript")]
     {
@@ -12920,7 +13356,7 @@ fn generate_plain_enum_ts_definition_method(
         let reexport = ident_reexport_ts(rust_ident, item_name, ts_generics);
 
         let typescript_type_gen = quote::quote! {
-            format!("{}export type {}{} =\n{};{}", docs, #item_name, #ts_generics, #type_code, #reexport)
+            format!("{}export type {}{} =\n{};{}\n\n{}", docs, #item_name, #ts_generics, #type_code, #reexport, #variant_reader)
         };
 
         quote::quote! {
@@ -13005,6 +13441,7 @@ fn generate_discriminated_enum_ts_definition_method(
     rust_ident: &str,
     ts_generics: &str,
     type_code: &str,
+    variant_reader: &str,
 ) -> proc_macro2::TokenStream {
     #[cfg(feature = "typescript")]
     {
@@ -13015,7 +13452,9 @@ fn generate_discriminated_enum_ts_definition_method(
             pub fn ts_definition() -> String {
                 #json_docs_gen
                 let bundled_docs = docs;
-                format!(r#"{bundled_docs}export type {}{} = {};{}"#, #item_name, #ts_generics, #type_code, #reexport)
+                format!(r#"{bundled_docs}export type {}{} = {};{}
+
+{}"#, #item_name, #ts_generics, #type_code, #reexport, #variant_reader)
             }
         }
     }

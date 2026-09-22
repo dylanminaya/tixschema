@@ -10,18 +10,27 @@ install-tools:
     cargo install cargo-hack || echo "cargo-hack already installed"
     cargo install just || echo "just already installed"
 
-# Test all possible feature combinations (2^7 = 128 combinations)
+# Test every combination of the plain features, plus the default set. The
+# feature sets are excluded as toggles: each is a name for features already in the powerset.
+# Slow and disk-hungry; `test-sets` is what CI runs.
 test:
     @echo "Testing all feature combinations..."
-    @echo "This will test 128 different feature combinations (2^7 with 7 features)"
-    cargo hack test --feature-powerset
+    cargo hack test --feature-powerset --exclude-features web,mobile,mongo
     @echo "✅ All feature combinations passed!"
 
 # Test all combinations with verbose output
 test-verbose:
     @echo "Testing all feature combinations (verbose)..."
-    cargo hack test --feature-powerset --verbose
+    cargo hack test --feature-powerset --exclude-features web,mobile,mongo --verbose
     @echo "✅ All feature combinations passed!"
+
+# Test the powerset of the feature sets (`web`, `mobile`, `mongo`), plus the default set. Every
+# plain feature is reached through its set; the plain-feature powerset stays in `test` for a local
+# run before a release.
+test-sets:
+    @echo "Testing every combination of the feature sets..."
+    cargo hack test --feature-powerset --include-features web,mobile,mongo
+    @echo "✅ All feature-set combinations passed!"
 
 # Test specific feature combinations manually
 test-named-features:
@@ -75,8 +84,14 @@ lint:
 # warning in any toggle, including feature-gated test code that `lint` (default features) misses.
 lint-all:
     @echo "Linting all feature combinations..."
-    cargo hack clippy --feature-powerset --all-targets -- -D warnings
+    cargo hack clippy --feature-powerset --exclude-features web,mobile,mongo --all-targets -- -D warnings
     @echo "✅ All feature combinations lint passed!"
+
+# Lint the powerset of the feature sets, the counterpart of `test-sets`; what CI runs.
+lint-sets:
+    @echo "Linting every combination of the feature sets..."
+    cargo hack clippy --feature-powerset --include-features web,mobile,mongo --all-targets -- -D warnings
+    @echo "✅ All feature-set combinations lint passed!"
 
 # Type-check the emitted TypeScript bundle with a real compiler, in the build that publishes the
 # client and the dispatcher and in the one that publishes neither.
@@ -99,15 +114,30 @@ typecheck-ts:
 # object as the constant `[object Object]`, so only running the client shows which URL comes out.
 # The groups inside `cargo test` stand down when they find no runtime, saying so on stderr. This
 # recipe refuses to stand down — it resolves each runtime up front and names it for the tests,
-# where a named runtime that cannot be started is a failure. Set TIXSCHEMA_NODE or TIXSCHEMA_DART
-# to use one that is not on PATH.
+# where a named runtime that cannot be started is a failure. Set TIXSCHEMA_NODE, TIXSCHEMA_DART,
+# TIXSCHEMA_SWIFT, TIXSCHEMA_KOTLINC or TIXSCHEMA_JAVA to use one that is not on PATH. The Kotlin
+# leg also needs TIXSCHEMA_KOTLIN_LIBS: a directory holding the serialization compiler plugin jar
+# and the kotlinx-serialization-json, kotlinx-serialization-core and kotlinx-coroutines-core jars.
 test-emitted:
     @command -v "${TIXSCHEMA_NODE:-node}" >/dev/null 2>&1 || { echo "No node: put \`node\` on PATH, or set TIXSCHEMA_NODE to one." >&2; exit 1; }
     @echo "Running the emitted TypeScript client with $(command -v "${TIXSCHEMA_NODE:-node}")..."
-    TIXSCHEMA_NODE="$(command -v "${TIXSCHEMA_NODE:-node}")" cargo test --test service_schema_emitted_client_tests run_node
+    TIXSCHEMA_NODE="$(command -v "${TIXSCHEMA_NODE:-node}")" cargo test --test service_schema_emitted_client_tests run_node::
+    @test -n "${TIXSCHEMA_NODE_MODULES:-}" && [ -d "${TIXSCHEMA_NODE_MODULES}/node_modules/ws" ] && [ -d "${TIXSCHEMA_NODE_MODULES}/node_modules/zod" ] || { echo "No ws/zod: set TIXSCHEMA_NODE_MODULES to a directory whose node_modules holds ws and zod." >&2; exit 1; }
+    @echo "Running the emitted WebSocket server with $(command -v "${TIXSCHEMA_NODE:-node}")..."
+    TIXSCHEMA_NODE="$(command -v "${TIXSCHEMA_NODE:-node}")" cargo test --test service_schema_emitted_client_tests run_node_ws_server
+    @test -n "${TIXSCHEMA_NODE_MODULES:-}" && [ -d "${TIXSCHEMA_NODE_MODULES}/node_modules/zod" ] || { echo "No zod: set TIXSCHEMA_NODE_MODULES to a directory whose node_modules holds zod." >&2; exit 1; }
+    @echo "Running the emitted TypeScript REST server with $(command -v "${TIXSCHEMA_NODE:-node}")..."
+    TIXSCHEMA_NODE="$(command -v "${TIXSCHEMA_NODE:-node}")" cargo test --test service_schema_emitted_client_tests run_node_http_service
     @command -v "${TIXSCHEMA_DART:-dart}" >/dev/null 2>&1 || { echo "No Dart SDK: put \`dart\` on PATH, or set TIXSCHEMA_DART to one." >&2; exit 1; }
     @echo "Running the emitted Dart client with $(command -v "${TIXSCHEMA_DART:-dart}")..."
     TIXSCHEMA_DART="$(command -v "${TIXSCHEMA_DART:-dart}")" cargo test --all-features --test service_schema_emitted_client_tests run_dart
+    @command -v "${TIXSCHEMA_SWIFT:-swift}" >/dev/null 2>&1 || { echo "No Swift toolchain: put \`swift\` on PATH, or set TIXSCHEMA_SWIFT to one." >&2; exit 1; }
+    @echo "Running the emitted Swift client with $(command -v "${TIXSCHEMA_SWIFT:-swift}")..."
+    TIXSCHEMA_SWIFT="$(command -v "${TIXSCHEMA_SWIFT:-swift}")" cargo test --all-features --test service_schema_emitted_client_tests run_swift
+    @command -v "${TIXSCHEMA_KOTLINC:-kotlinc}" >/dev/null 2>&1 || { echo "No kotlinc: put \`kotlinc\` on PATH, or set TIXSCHEMA_KOTLINC to one." >&2; exit 1; }
+    @test -n "${TIXSCHEMA_KOTLIN_LIBS:-}" || { echo "Set TIXSCHEMA_KOTLIN_LIBS to a directory holding the serialization compiler plugin jar and the three library jars." >&2; exit 1; }
+    @echo "Running the emitted Kotlin client with $(command -v "${TIXSCHEMA_KOTLINC:-kotlinc}")..."
+    TIXSCHEMA_KOTLINC="$(command -v "${TIXSCHEMA_KOTLINC:-kotlinc}")" cargo test --all-features --test service_schema_emitted_client_tests run_kotlin
     @echo "✅ The emitted clients build the URLs they claim to!"
 
 # Check code without running tests
@@ -140,7 +170,7 @@ clean:
 all: lint lint-all-features test-named-features
     @echo "All checks completed successfully!"
 
-# Exhaustive pipeline - the feature-powerset gates over all 128 combinations (what `all` ran
+# Exhaustive pipeline - the feature-powerset gates over every plain-feature combination (what `all` ran
 # before). Slow; run before a release or after touching feature gates.
 all-powerset: lint lint-all test
     @echo "All powerset checks completed successfully!"

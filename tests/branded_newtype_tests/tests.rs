@@ -34,7 +34,7 @@ mod zod_ts_tests {
     #[model_schema()]
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(transparent)]
-    pub struct SequenceNum(pub u64);
+    pub struct SequenceNum(pub i64);
 
     #[test]
     fn test_branded_newtype_ts_definition() {
@@ -128,7 +128,7 @@ mod zod_ts_tests {
         let zod = SequenceNum::zod_schema();
         assert!(
             zod.contains("z.number().int()"),
-            "Should use z.number().int() for u64. Got: {zod}"
+            "Should use z.number().int() for i64. Got: {zod}"
         );
         assert!(
             zod.contains("SequenceNum$RawSchema"),
@@ -1964,7 +1964,7 @@ mod branded_sibling_inner_tests {
     #[model_schema()]
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(transparent)]
-    pub struct PlainCount(pub u64);
+    pub struct PlainCount(pub i64);
 
     // A plain generic struct of named fields, so a brand stands over an object-shaped sibling
     // instantiation.
