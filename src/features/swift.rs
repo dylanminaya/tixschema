@@ -680,9 +680,9 @@ fn swift_full_real_type(field: &FieldDef, name_hint: &str, aux: &mut Vec<String>
 /// outside this module that names a type without declaring it, mirroring
 /// `crate::features::dart::dart_typename`. A `#[service_schema]` client reaches for this to name
 /// an operation's message, success or error type by the same Swift spelling its own declaration
-/// publishes. Gated exactly as `crate::features::service_schema` is — the one caller — so a build
-/// that never compiles that module never carries this as dead code either.
-#[cfg(all(feature = "serde", feature = "typescript"))]
+/// publishes. Gated exactly as `crate::features::service_schema`'s Swift seam is — the one
+/// caller — so a build that never compiles it never carries this as dead code either.
+#[cfg(all(feature = "serde", feature = "swift"))]
 pub fn swift_reference_type(field: &FieldDef, name_hint: &str) -> (String, Vec<String>) {
     let mut aux = Vec::new();
     let real_type = swift_full_real_type(field, name_hint, &mut aux);

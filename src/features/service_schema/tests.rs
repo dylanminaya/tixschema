@@ -11,7 +11,7 @@
 //! group in `tests/service_schema_typescript_tests/type_check.rs` hands the bundle and two
 //! implementations to a real `tsc` wherever one is reachable.
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod client_tests;
 #[cfg(feature = "dart")]
 mod dart_http_client_tests;
@@ -19,26 +19,26 @@ mod dart_http_client_tests;
 mod dart_result_tests;
 #[cfg(feature = "dart")]
 mod dart_ws_client_tests;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod http_client_tests;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod http_service_tests;
 #[cfg(feature = "kotlin")]
 mod kotlin_http_client_tests;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod service_tests;
 #[cfg(feature = "swift")]
 mod swift_http_client_tests;
 #[cfg(feature = "swift")]
 mod swift_ws_client_tests;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod ws_client_tests;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod ws_server_tests;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod ws_service_tests;
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 use super::client;
 #[cfg(feature = "dart")]
 use super::dart_http_client;
@@ -46,25 +46,27 @@ use super::dart_http_client;
 use super::dart_result;
 #[cfg(feature = "dart")]
 use super::dart_ws_client;
-#[cfg(feature = "zod")]
+use super::emit;
+#[cfg(all(feature = "typescript", feature = "zod"))]
 use super::http_client;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 use super::http_service;
 #[cfg(feature = "kotlin")]
 use super::kotlin_http_client;
-#[cfg(feature = "zod")]
+#[cfg(feature = "typescript")]
+use super::result;
+#[cfg(all(feature = "typescript", feature = "zod"))]
 use super::service;
 #[cfg(feature = "swift")]
 use super::swift_http_client;
 #[cfg(feature = "swift")]
 use super::swift_ws_client;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 use super::ws_client;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 use super::ws_server;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 use super::ws_service;
-use super::{emit, result};
 use crate::service_schema::parse::{ServiceDef, parse_service};
 use quote::ToTokens as _;
 use syn::ItemTrait;
@@ -98,7 +100,7 @@ const MIXED_SERVICE: &str = "
 /// `header_in` binding, a `header_out` tuple success and two mapped errors (one of which shares a
 /// code with a fixed fault status), a one-way `DELETE` whose one argument is the message and the
 /// whole placeholder at once, and an operation naming no `http(...)` group at all.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const MIXED_HTTP_SERVICE: &str = "
     pub trait DocumentClientService<Ctx> {
         #[service_schema_op(http(
@@ -136,7 +138,7 @@ const MIXED_HTTP_SERVICE: &str = "
 
 /// A service with a required (non-`Option`) `header_in` binding, to exercise the presence check
 /// `MIXED_HTTP_SERVICE`'s `Option<String>` `byte_range` does not get.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const REQUIRED_HEADER_HTTP_SERVICE: &str = "
     pub trait DocumentClientService<Ctx> {
         #[service_schema_op(http(
@@ -224,7 +226,7 @@ const DART_HTTP_SERVICE: &str = "
 
 /// A service declaring one `body = \"bytes\"` operation composing `header_out` onto its own tuple:
 /// the bytes, their content type, then the declared header.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const BYTES_HTTP_SERVICE: &str = "
     pub trait ThumbnailClientService<Ctx> {
         #[service_schema_op(http(
@@ -245,7 +247,7 @@ const BYTES_HTTP_SERVICE: &str = "
 /// A service declaring two `body = \"stream\"` operations: one answering the bare streamed answer,
 /// one composing a declared `header_out` onto it. Zod-gated mirror of `DART_STREAM_HTTP_SERVICE`,
 /// since a build can carry `zod` without `dart`.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const STREAM_HTTP_SERVICE: &str = "
     pub trait ContentClientService<Ctx> {
         #[service_schema_op(http(
@@ -277,7 +279,7 @@ const STREAM_HTTP_SERVICE: &str = "
 
 /// A service declaring one `body = \"multipart\"` operation: a path placeholder, two scalar
 /// `Generated` fields (one required, one optional) and a `part` binding for the file itself.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const MULTIPART_HTTP_SERVICE: &str = "
     pub trait UploadClientService<Ctx> {
         #[service_schema_op(http(
@@ -298,7 +300,7 @@ const MULTIPART_HTTP_SERVICE: &str = "
     }
 ";
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
     pub trait ConversationClientService<Ctx> {
         #[service_schema_op(http(
@@ -323,7 +325,7 @@ const SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
 /// A service declaring one bodyless `GET` whose macro-generated message carries a placeholder
 /// field plus two unbound loose arguments (one numeric, one boolean), and whose operation
 /// declares no `error_status` table at all.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const QUERY_HTTP_SERVICE: &str = "
     pub trait SearchClientService<Ctx> {
         #[service_schema_op(http(
@@ -344,7 +346,7 @@ const QUERY_HTTP_SERVICE: &str = "
 /// clients against — `ConversationId` a wire-scalar newtype, `purge_conversation` declared first,
 /// `window` second — which is what `ts_http_service()`'s own design document was executed
 /// against and is measured against verbatim.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 const EMITTED_CLIENT_TEST_SERVICE: &str = "
     pub trait ConversationClientService<Ctx> {
         #[service_schema_op(
@@ -890,32 +892,32 @@ fn swift_ws_client_of(source: &str) -> String {
     swift_ws_client::emit(&parsed(source)).join("\n\n")
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn client_of(source: &str) -> String {
     client::emit(&parsed(source)).join("\n\n")
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn http_client_of(source: &str) -> String {
     http_client::emit(&parsed(source)).join("\n\n")
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn http_service_of(source: &str) -> String {
     http_service::emit(&parsed(source)).join("\n\n")
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn ws_client_of(source: &str) -> String {
     ws_client::emit(&parsed(source)).join("\n\n")
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn ws_service_of(source: &str) -> String {
     ws_service::emit(&parsed(source)).join("\n\n")
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn ws_server_of(source: &str) -> String {
     ws_server::emit(&parsed(source)).join("\n\n")
 }
@@ -953,11 +955,12 @@ fn registration(source: &str) -> String {
     emit(&parsed(source), false).to_token_stream().to_string()
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn service_of(source: &str) -> String {
     service::emit(&parsed(source)).join("\n\n")
 }
 
+#[cfg(feature = "typescript")]
 #[test]
 fn a_one_way_operation_gets_no_result_type() {
     let published = result::emit(&parsed(MIXED_SERVICE));
@@ -970,6 +973,7 @@ fn a_one_way_operation_gets_no_result_type() {
     );
 }
 
+#[cfg(feature = "typescript")]
 #[test]
 fn every_declared_message_is_registered_with_the_service() {
     let rendered = registration(MIXED_SERVICE);
@@ -999,6 +1003,7 @@ fn the_bundle_line_hangs_off_a_struct_named_for_the_service() {
     );
 }
 
+#[cfg(feature = "typescript")]
 #[test]
 fn the_fault_s_fields_are_asked_for_rather_than_written_here() {
     let rendered = registration(MIXED_SERVICE);
@@ -1033,6 +1038,7 @@ fn the_fault_s_fields_are_asked_for_rather_than_written_here() {
 /// This is what TypeScript is given in place of the private fields Rust has. The Rust fault refuses
 /// the literal an implementation would write with `E0451`, and a plain structural object type
 /// refuses nothing at all.
+#[cfg(feature = "typescript")]
 #[test]
 fn the_published_fault_is_the_asked_for_fields_under_a_brand_the_bundle_exports_nowhere() {
     let rendered = registration(MIXED_SERVICE);
@@ -1064,6 +1070,7 @@ fn the_published_fault_is_the_asked_for_fields_under_a_brand_the_bundle_exports_
     );
 }
 
+#[cfg(feature = "typescript")]
 #[test]
 fn the_result_joins_the_two_declared_arms_and_adds_nothing_to_either() {
     let published = result::emit(&parsed(MIXED_SERVICE));
@@ -1088,7 +1095,7 @@ fn the_result_joins_the_two_declared_arms_and_adds_nothing_to_either() {
 /// `StreamedAnswer` carries no `#[model_schema()]` of its own, so a bare `value: StreamedAnswer`
 /// would publish a TypeScript reference nothing declares. The result type stands in the fixed
 /// streamed record instead.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 #[test]
 fn the_result_answers_the_streamed_record_rather_than_the_undescribable_rust_type() {
     let published = result::emit(&parsed(STREAM_HTTP_SERVICE));
@@ -1112,7 +1119,7 @@ fn the_result_answers_the_streamed_record_rather_than_the_undescribable_rust_typ
 
 /// A declared `header_out` wraps the streamed record in a tuple, exactly as the JSON and bytes
 /// paths compose theirs.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 #[test]
 fn the_result_composes_header_out_onto_the_streamed_record_in_a_tuple() {
     let published = result::emit(&parsed(STREAM_HTTP_SERVICE));
@@ -1130,6 +1137,7 @@ fn the_result_composes_header_out_onto_the_streamed_record_in_a_tuple() {
     );
 }
 
+#[cfg(feature = "typescript")]
 #[test]
 fn the_result_takes_its_name_from_the_service_and_the_operation() {
     let published = result::emit(&parsed(MIXED_SERVICE));
@@ -1155,6 +1163,7 @@ fn the_result_takes_its_name_from_the_service_and_the_operation() {
     );
 }
 
+#[cfg(feature = "typescript")]
 #[test]
 fn two_operations_naming_unrelated_errors_keep_them_apart() {
     let published = result::emit(&parsed(MIXED_SERVICE));
@@ -1173,7 +1182,7 @@ fn two_operations_naming_unrelated_errors_keep_them_apart() {
 /// The pair that says a client and a dispatcher are published exactly where their check can be.
 /// This is the half that runs in a build with the Zod surface; the one below it is the same
 /// registration read in a build without it, and neither could pass alone.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 #[test]
 fn a_build_that_publishes_a_schema_publishes_the_client_and_the_dispatcher_that_parse_it() {
     let rendered = registration(MIXED_SERVICE);
@@ -1203,7 +1212,7 @@ fn a_build_that_publishes_a_schema_publishes_the_client_and_the_dispatcher_that_
 /// gave it to an implementation entitled to assume it was valid. Both compiled, both read like the
 /// checked ones, and the Rust half of the same service went on validating — so the two halves
 /// disagreed about what they accept and nothing said so.
-#[cfg(not(feature = "zod"))]
+#[cfg(all(feature = "typescript", not(feature = "zod")))]
 #[test]
 fn a_build_that_publishes_no_schema_publishes_no_client_and_no_dispatcher() {
     let rendered = registration(MIXED_SERVICE);
@@ -1242,7 +1251,7 @@ fn a_build_that_publishes_no_schema_publishes_no_client_and_no_dispatcher() {
 /// The missing methods are the one thing a reader of this build's registry goes looking for, so
 /// the reason they are missing is written on the registry itself rather than left to an
 /// `E0599` naming the method and nothing else.
-#[cfg(not(feature = "zod"))]
+#[cfg(all(feature = "typescript", not(feature = "zod")))]
 #[test]
 fn a_build_that_publishes_no_client_says_on_the_registry_why_not() {
     let rendered = registration(MIXED_SERVICE);
@@ -1276,7 +1285,7 @@ fn a_build_that_publishes_no_schema_publishes_no_http_service_either() {
 }
 
 /// The counterpart of the refusal above, in the build where the accessor exists.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 #[test]
 fn a_build_that_publishes_a_schema_publishes_ts_http_service() {
     let rendered = registration(MIXED_SERVICE);
@@ -1289,7 +1298,7 @@ fn a_build_that_publishes_a_schema_publishes_ts_http_service() {
 /// What the Zod-less build still publishes, and therefore why it is not refused outright: the
 /// message types and the result envelopes describe what the *Rust* dispatcher and client put on the
 /// wire, and that half validates in this build exactly as it does in any other.
-#[cfg(not(feature = "zod"))]
+#[cfg(all(feature = "typescript", not(feature = "zod")))]
 #[test]
 fn a_build_that_publishes_no_client_still_publishes_every_type_the_wire_carries() {
     let rendered = registration(MIXED_SERVICE);
@@ -1307,7 +1316,7 @@ fn a_build_that_publishes_no_client_still_publishes_every_type_the_wire_carries(
     }
 }
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 #[test]
 fn a_declared_message_brings_its_schema_along_with_its_type() {
     let rendered = registration(MIXED_SERVICE);
