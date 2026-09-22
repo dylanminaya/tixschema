@@ -1406,6 +1406,20 @@ pub trait DocumentService<Ctx> {
         document_id: String,
     ) -> Result<CreateDocumentResponse, FlagError>;
 
+    /// A required (non-`Option`) `header_in`, unlike `get_version`'s optional one — its absence
+    /// must be refused before the header is ever decoded.
+    #[service_schema_op(http(
+        method = "GET",
+        path = "/documents/{document_id}/range",
+        header_in("range" = byte_range),
+    ))]
+    async fn get_document_range(
+        &self,
+        ctx: &Ctx,
+        document_id: String,
+        byte_range: String,
+    ) -> Result<VersionResponse, GetVersionError>;
+
     #[service_schema_op(http(
         method = "GET",
         path = "/documents/{document_id}/thumbnail",
@@ -1516,6 +1530,19 @@ impl DocumentService<()> for DocumentBackEnd {
             "again" => Err(FlagError::AlreadyFlagged),
             _ => Ok(CreateDocumentResponse { document_id }),
         }
+    }
+
+    async fn get_document_range(
+        &self,
+        _ctx: &(),
+        document_id: String,
+        byte_range: String,
+    ) -> Result<VersionResponse, GetVersionError> {
+        ready(()).await;
+        self.reach(format!("get_document_range {document_id} {byte_range}"));
+        Ok(VersionResponse {
+            content: format!("{document_id}@{byte_range}"),
+        })
     }
 
     async fn get_thumbnail(
@@ -2221,6 +2248,20 @@ fn an_absent_option_header_in_decodes_as_the_arguments_own_none_rather_than_a_nu
 }
 
 #[test]
+fn an_absent_required_header_in_is_refused_by_name_rather_than_reaching_the_implementation() {
+    let (reached, response) = http_dispatched("GET", "/documents/present/range", "", &[], b"");
+    assert!(
+        reached.is_empty(),
+        "the handler must not run without its required header"
+    );
+    assert_eq!(response.status(), 400);
+    let fault: serde_json::Value = serde_json::from_slice(response.body()).unwrap();
+    assert_eq!(fault["kind"], "failed-validation");
+    assert_eq!(fault["field"], "range");
+    assert_eq!(fault["detail"], "a required header was not carried");
+}
+
+#[test]
 fn a_mapped_error_answers_its_declared_status_with_the_error_enum_as_the_body() {
     let (_not_found_reached, not_found_response) =
         http_dispatched("GET", "/documents/missing/versions/v1", "", &[], b"");
@@ -2437,7 +2478,7 @@ fn a_struct_variant_and_a_tuple_variant_each_answer_their_own_declared_status() 
 #[test]
 fn the_route_table_lists_one_row_per_operation_with_its_own_statuses() {
     let routes = http_rest_transport::ROUTES;
-    assert_eq!(routes.len(), 10, "one row per operation. Got: {:?}", {
+    assert_eq!(routes.len(), 11, "one row per operation. Got: {:?}", {
         routes
             .iter()
             .map(http_rest_transport::Route::operation)
