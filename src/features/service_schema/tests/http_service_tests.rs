@@ -8,9 +8,8 @@ use super::{
 };
 use crate::utils::record_wire_scalar;
 
-/// Section 3 of the design document, exactly as executed, save for the error-status switch: the
-/// hand-written sample tests `(error as { errorCode: string }).errorCode`, and the emitter reads
-/// the declared error enum's own generated `WindowError$Variant` reader instead.
+/// The expected emitted dispatcher text: the error status is read through the declared enum's
+/// own generated `WindowError$Variant` reader rather than an `errorCode` cast.
 const EXPECTED: &str = "/** One operation's method, path template and status table, for an adapter that registers a handler per route. */
 export type ConversationClientServiceHttpRoute = {
   errorStatuses: ReadonlyArray<number>;
