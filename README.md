@@ -3215,6 +3215,8 @@ Enable the `chrono` feature for chrono date/time type support. All chrono types 
 tixschema = { features = ["chrono"] }
 ```
 
+A consumer enabling `chrono` on tixschema must also enable `serde` on its own `chrono` dependency — `as_number` (below) injects a `chrono::serde::ts_milliseconds` hook that only exists there.
+
 Supported types and mappings:
 
 | Rust Type | TypeScript | Zod Schema | JSON Schema Format |
@@ -3226,6 +3228,8 @@ Supported types and mappings:
 | `DateTime<Tz>` + `#[model_schema_prop(as_number)]` | `number` | `z.preprocess(<epoch arrow>, z.number())` | `"date-time"` |
 
 `DateTime<Tz>` renders as a native TypeScript `Date` (`z.coerce.date()`) by default, which is what MongoDB needs to expire a BSON `Date` via TTL. The bare `as_number` flag opts a single `DateTime<Tz>` field into an epoch-milliseconds `number` instead, validated by a self-contained inline coercer (no imported helper). `as_number` is only valid on a `DateTime<Tz>` field — using it elsewhere is a compile error.
+
+On the Rust side, `as_number` also injects `#[serde(with = "chrono::serde::ts_milliseconds")]` (or `ts_milliseconds_option` for an `Option<DateTime<Tz>>`), so the field serializes to, and deserializes from, the same epoch-milliseconds number every surface describes — no hand-written serde attribute needed. Where the field already carries its own `with` or `deserialize_with`, the injection is held back and the author's hook runs instead.
 
 `NaiveTime` stays a TypeScript `string`, but its Zod schema also accepts millis-since-start-of-day, converting them to an `HH:MM:SS` string before validation.
 
