@@ -1,17 +1,6 @@
 //! The Swift type name a bare `syn::Type` reference renders as — a message, a success, a
-//! declared error, or a `header_in`/`header_out`/`part` binding's own argument type. Mirrors
-//! `crate::features::dart::dart_typename`, reading through the same [`FieldDef`] walk every
-//! field's own type goes through, but kept apart from `crate::features::swift`'s own `Codable`
-//! codec generation: that module answers for a *declared item*'s fields, threading an `aux`
-//! vector of nested tuple and map-key wrapper structs through every leaf.
-//!
-//! [`super::swift_http_client`] is the one caller: it never asks `JSONDecoder` to decode a whole
-//! tuple, since a `header_out` success decodes its body and reads its header separately and
-//! assembles the Swift tuple by hand — so the tuple named here is a bare `(A, B)`, and no wrapper
-//! struct is ever generated. [`super::swift_ws_client`] cannot split a payload that way (there is
-//! no header channel over the socket) and so reaches for
-//! [`crate::features::swift::swift_reference_type`] instead, whose `aux` wrapper gives a bare
-//! tuple or non-string-keyed map the `Codable` conformance a whole-payload decode needs.
+//! declared error, or a `header_in`/`header_out`/`part` binding's own argument type. Kept apart
+//! from `crate::features::swift`'s own codec generation, which answers for a *declared item*.
 
 use crate::features::swift::lookup_swift_name;
 use crate::field_type::{FieldDef, FieldDefType, get_field_def, is_sequence_wrapper};

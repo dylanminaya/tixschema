@@ -1200,9 +1200,8 @@ pub fn exec_model_schema(args: TokenStream, input: TokenStream) -> TokenStream {
     // unlike a JavaScript module's top-to-bottom `const` evaluation, so it carries no factory-cache
     // or `z.lazy`-style deferral of its own to wire in).
     let dart_tokens = dart_suffix_tokens(&item, parsed_args.name_override.as_deref());
-    // Same independence from the struct/enum/alias dispatch below as the Dart tokens above; the
-    // refusal walks the item's own fields ahead of the move too, since it names each one by its
-    // declared type.
+    // Same independence as the Dart tokens above; the refusal walks the item's own fields ahead
+    // of the move too, since it names each one by its declared type.
     let swift_tokens = swift_suffix_tokens(&item, parsed_args.name_override.as_deref());
     let swift_refusals = swift_width_refusals(&item);
     // Same independence as the Dart and Swift tokens above.
@@ -3332,8 +3331,7 @@ fn collect_swift_scanned_fields<'item>(
 
 /// The refused primitive `field_def`, or anything it directly contains (a map's key or value, a
 /// tuple's slots, a generic argument), names — `None` where nothing under it is a `u64` or
-/// `usize`. [`refuses_swift`] itself answers only for one `FieldDef`'s own type; this is the walk
-/// that reaches every one a declaration can nest one inside.
+/// `usize`. [`refuses_swift`] answers only for one `FieldDef`'s own type; this walks every one.
 #[cfg(feature = "swift")]
 fn swift_refused_primitive_name(field_def: &FieldDef) -> Option<&'static str> {
     if refuses_swift(field_def) {

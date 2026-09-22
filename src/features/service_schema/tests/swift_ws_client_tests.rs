@@ -1,9 +1,6 @@
-//! The Swift `ws_rpc` client, read off the emitted text.
-//!
-//! No consuming build compiles this text against real message types here, so these are the same
-//! kind of structural read `dart_ws_client_tests` gives its own emitted source: a substring that
-//! must appear, and a name that must not. The text has also been compiled and driven under a real
-//! Swift toolchain, against an in-memory socket, separately from this file's own assertions.
+//! The Swift `ws_rpc` client, read off the emitted text: a structural read, a substring that
+//! must appear and a name that must not, rather than a compile. The text is separately compiled
+//! and driven under a real Swift toolchain against an in-memory socket, in `run_swift.rs`.
 
 use super::{SWIFT_UNIT_SUCCESS_SERVICE, SWIFT_WS_SERVICE, swift_ws_client_of};
 

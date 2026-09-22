@@ -1,14 +1,6 @@
-//! Swift type and `Codable`-codec generation.
-//!
-//! Emits one `swift_definition()` method per `#[model_schema]` item — a Swift `struct` or `enum`
-//! conforming to `Codable, Sendable`, generating the way the Dart backend generates:
-//! `swift_schema_dispatch` is called directly from `exec_model_schema`, ahead of the
-//! `process_struct`/`process_enum`/`process_type_alias` dispatch that consumes the item, and reads
-//! its own borrow of it. Where Dart hand-writes `fromJson`/`toJson` for every field, Swift's own
-//! `Codable` synthesis covers the common shapes once a `CodingKeys` enum carries the wire
-//! spelling; a hand-written `init(from:)`/`encode(to:)` is written only where synthesis cannot
-//! reach — a `nullable` field, a non-string map key, a tuple, and the three enum shapes serde
-//! writes as something other than `{"case": payload}`.
+//! Swift type and `Codable`-codec generation: emits one `swift_definition()` method per
+//! `#[model_schema]` item — a Swift `struct` or `enum` conforming to `Codable, Sendable`. A
+//! hand-written `init(from:)`/`encode(to:)` is written only where `Codable` synthesis cannot reach.
 
 use core::cell::RefCell;
 use core::fmt::Write as _;
@@ -34,9 +26,8 @@ use crate::utils::{
 use crate::features::serde::{parse_serde_field_attributes, parse_serde_type_attributes};
 
 /// One field this module has decided belongs on the wire, resolved to the Swift property it
-/// earns: its Rust name, its lower-camel Swift name, its wire name, whether the key always
-/// reaches the wire, whether it is a `#[serde(flatten)]` source, and the shape that drives its
-/// decode/encode statements.
+/// earns — its Rust name, its lower-camel Swift name, its wire name, and the shape that drives
+/// its decode/encode statements.
 struct SwiftField {
     field_def: FieldDef,
     flatten: bool,
@@ -87,10 +78,8 @@ struct SwiftFieldShape {
 
 thread_local! {
     /// The Swift type name each Rust ident publishes — the one thing a reference to a sibling item
-    /// needs, since the reference's own field carries the type arguments. Independent of Dart's own
-    /// `DART_NAMES` and of the three-surface `ALIAS_INFO` registry: Swift resolves a reference
-    /// across the whole file regardless of declaration order, so this carries no forward-reference
-    /// bookkeeping either.
+    /// needs. Swift resolves a reference across the whole file regardless of declaration order, so
+    /// this carries no forward-reference bookkeeping.
     static SWIFT_NAMES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
 }
 
@@ -110,9 +99,6 @@ pub fn swift_schema_dispatch(item: &Item, name_override: Option<&str>) -> TokenS
 
 /// Whether `field`'s own declared type has no Swift mapping — a `u64` or `usize`, refused rather
 /// than mapped because a decoder in the wild could disagree about the top half of the range.
-/// Asked of a field's own type, an array's element, a tuple slot and a generic argument alike —
-/// each is its own `FieldDef`, `refuses_swift` read at every one of them by the caller that walks
-/// the declaration.
 pub const fn refuses_swift(field: &FieldDef) -> bool {
     matches!(field.field_type, FieldDefType::U64 | FieldDefType::Usize)
 }
@@ -652,9 +638,8 @@ fn map_shape(
 }
 
 /// `field`'s shape together with its full public Swift type: [`swift_field_shape`]'s real leaf,
-/// wrapped in one `[...]` per array level (an inner level's own optionality carried as `?`), then
-/// the field's own outer `?` — mirrors `dart::dart_typename`. The one seam that pushes a field's
-/// auxiliary declarations, so every caller needing both the type and the shape calls this once.
+/// wrapped in one `[...]` per array level, then the field's own outer `?`. The one seam that
+/// pushes a field's auxiliary declarations, so every caller needing both calls this once.
 fn swift_resolve(
     field: &FieldDef,
     name_hint: &str,
@@ -675,13 +660,9 @@ fn swift_full_real_type(field: &FieldDef, name_hint: &str, aux: &mut Vec<String>
     swift_resolve(field, name_hint, aux).0
 }
 
-/// The Swift type name a field earns, together with any auxiliary declarations the reference
-/// needs of its own (a tuple-slot struct, a non-string map-key wrapper) — exposed for a caller
-/// outside this module that names a type without declaring it, mirroring
-/// `crate::features::dart::dart_typename`. A `#[service_schema]` client reaches for this to name
-/// an operation's message, success or error type by the same Swift spelling its own declaration
-/// publishes. Gated exactly as `crate::features::service_schema`'s Swift seam is — the one
-/// caller — so a build that never compiles it never carries this as dead code either.
+/// The Swift type name a field earns, together with any auxiliary declarations it needs (a
+/// tuple-slot struct, a non-string map-key wrapper) — exposed for a `#[service_schema]` client to
+/// name a message, success or error type by the same spelling its own declaration publishes.
 #[cfg(all(feature = "serde", feature = "swift"))]
 pub fn swift_reference_type(field: &FieldDef, name_hint: &str) -> (String, Vec<String>) {
     let mut aux = Vec::new();
@@ -1030,9 +1011,8 @@ fn swift_coding_keys(fields: &[SwiftField], extra: &[(String, String)]) -> Strin
 }
 
 /// The body (properties, `CodingKeys`, and — only where synthesis cannot reach — `init(from:)`,
-/// `encode(to:)` and the memberwise initializer a custom `init(from:)` costs) for a set of
-/// [`SwiftField`]s. `extra_coding_keys` lists cases with no matching field (an internally-tagged
-/// variant's own merged tag key).
+/// `encode(to:)` and the memberwise initializer it costs) for a set of [`SwiftField`]s.
+/// `extra_coding_keys` lists cases with no matching field (an internally-tagged variant's tag).
 fn struct_body_content(fields: &[SwiftField], extra_coding_keys: &[(String, String)]) -> String {
     let props = fields.iter().fold(String::new(), |mut acc, field| {
         write!(
@@ -1313,11 +1293,8 @@ fn alias_swift_tokens(item_type: &ItemType, name_override: Option<&str>) -> Toke
 // ---------------------------------------------------------------------------------------------
 
 /// One variant's own payload, resolved to at most one associated value: `None` for a `Unit`
-/// variant, otherwise the Swift type the case carries — an existing type for a `TupleSingle`
-/// slot, or a freshly generated struct (pushed into `aux`) for a `Named` payload or a folded
-/// `TupleMultiple` tuple. A dedicated struct for a `Named` payload, rather than Swift's own
-/// labelled-associated-value synthesis, is what lets a variant's own fields carry a serde rename
-/// no outer `CodingKeys` could reach.
+/// variant, an existing type for a `TupleSingle` slot, or a freshly generated struct (pushed
+/// into `aux`) for a `Named` payload or a folded `TupleMultiple` tuple.
 fn resolve_variant_payload(
     variant: &Variant,
     field_rule: RenameRule,
@@ -1407,10 +1384,8 @@ fn plain_enum_swift_source(item_enum: &ItemEnum, rust_ident: &str, export_name: 
 }
 
 /// The Swift tokens the externally tagged shape earns — serde's default once a variant carries
-/// data. Swift's own synthesis for an enum with associated values wraps even a single one under
-/// an auto-generated `_0` key, which is not the bare `{"Foo": payload}` serde writes, so this
-/// writes `init(from:)`/`encode(to:)` by hand: a `Unit` variant tries the bare wire string first,
-/// otherwise the payload sits under the object's one key.
+/// data. Swift's own associated-value synthesis wraps a payload under an auto-generated `_0` key
+/// rather than serde's bare `{"Foo": payload}`, so this writes the codec by hand instead.
 fn external_tagged_enum_swift_source(
     item_enum: &ItemEnum,
     rust_ident: &str,

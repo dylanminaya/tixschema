@@ -1,39 +1,6 @@
-//! The Swift `ws_rpc` client: a socket seam over which one actor correlates requests to their
-//! replies, probes liveness on a heartbeat, checks every reply against the operation's own
-//! declared type, and settles every waiting call with a `transport-failure` fault when the socket
-//! closes — the TypeScript client's feature set, item for item, read at [`super::ws_client`].
-//!
-//! # One actor, not a transport plus a client
-//!
-//! The transport is an `actor` rather than a class guarded by a lock: a lock compiles but leaves a
-//! forgotten `lock()` to break silently, while an actor has the compiler enforce the isolation.
-//! There is also no seam left to cut between "the transport" and "the client": the reply's own
-//! success or error type is known only to the
-//! per-operation method, so the actor that owns the correlation map is the same actor that decodes
-//! the reply. [`transport_actor`] is that one actor, carrying one public method per operation with
-//! the REST client's own signatures; [`client_alias`] publishes `{Named}WsClient` as another name
-//! for it, so a caller constructs it the way it constructs `{Named}HttpClient`.
-//!
-//! # Ordering: one stream, not one task per frame
-//!
-//! A socket's `onMessage` callback fires once per inbound frame, synchronously, in the order
-//! frames arrived — but handing each one to the actor through its own freshly spawned `Task`
-//! gives Swift no reason to run those tasks in that same order. [`transport_actor`] instead feeds
-//! every inbound frame into one `AsyncStream`, fed by `onMessage` alone, and drains it with one
-//! `for await` loop bound to the actor: `AsyncStream` delivers what was `yield`ed in the order it
-//! was `yield`ed, and a single consuming loop processes one frame to completion before the next is
-//! read, so arrival order is preserved end to end without depending on how the runtime happens to
-//! schedule unstructured tasks.
-//!
-//! # The shared failure and refusal types
-//!
-//! `{Named}{Operation}Failure` and `{Named}Refusal` are declared once, by
-//! [`super::swift_http_client`], and named here rather than redeclared — the same operation
-//! answers the same failure whichever transport carried the call. What this module still owns is
-//! the fault *it* can report on its own: a reply that will not decode, or a call that never
-//! finished because the socket closed, built through [`transport_failure_helper`] and
-//! [`failed_validation_helper`] and named with a `Ws` infix so a bundle carrying both clients
-//! never declares two functions under one name.
+//! The Swift `ws_rpc` client: a socket seam over which one `actor` ([`transport_actor`])
+//! correlates requests to their replies, probes liveness on a heartbeat, and settles every
+//! waiting call with a `transport-failure` fault when the socket closes.
 
 use crate::features::swift::swift_reference_type;
 use crate::field_type::get_field_def;
@@ -142,11 +109,9 @@ fn options_type(named: &str) -> String {
 // service, reused by every operation method.
 // ---------------------------------------------------------------------------------------------
 
-/// The outbound frame shapes and the inbound decode probes every operation method shares: a
-/// generic `request`/`notify` writer over any `Encodable` payload, a bare probe reading `kind`,
-/// `id` and `service` off a frame before its `value`/`error` shape is known, and the three
-/// generic envelopes that read `value`, a declared `error`, or the wire's own
-/// `{ isServiceFault, fault }` shape once it is.
+/// The outbound frame shapes and inbound decode envelopes every operation method shares, plus a
+/// bare probe that reads `kind`, `id` and `service` off a frame before its `value`/`error` shape
+/// is known.
 fn support_types(named: &str) -> String {
     let fault = fault_name(named);
     format!(
@@ -267,10 +232,9 @@ fn actor_header(named: &str) -> String {
     )
 }
 
-/// Wires the socket to one `AsyncStream`, so every inbound frame is decoded in the order it
-/// arrived rather than through a `Task` per frame — see the module's own doc for why. `self` is
-/// captured weakly in both spawned tasks so neither keeps the actor alive past its own last
-/// strong reference.
+/// Wires the socket to one `AsyncStream` so inbound frames decode in arrival order (a `Task` per
+/// frame gives no such guarantee). `self` is captured weakly in both spawned tasks so neither
+/// keeps the actor alive past its own last strong reference.
 fn actor_init(named: &str) -> String {
     format!(
         "  public init(socket: any {named}WsSocket, options: {named}WsOptions = .init()) {{\n    \
@@ -299,10 +263,9 @@ fn actor_close_method() -> String {
         .to_owned()
 }
 
-/// Sends a `request` frame and awaits the matching `reply`'s own raw bytes, or `nil` once the
-/// socket closes before one arrives. Registering the pending continuation and writing the frame
-/// happen inside the same non-suspending closure, so no reply for this id can be read before it
-/// is recorded.
+/// Sends a `request` frame and awaits the matching `reply`'s raw bytes, or `nil` once the socket
+/// closes first. Registering the pending continuation and writing the frame happen inside the
+/// same non-suspending closure, so no reply for this id can be read before it is recorded.
 fn actor_correlate(named: &str) -> String {
     format!(
         "  private func correlate<Payload: Encodable>(\n    \
@@ -340,10 +303,8 @@ fn actor_send_notify(named: &str) -> String {
     )
 }
 
-/// Reads one frame's `kind`: a `ping` is answered with a `pong`; a `pong` re-arms the next probe;
-/// a `reply` naming this service and an id still pending resumes that continuation with the
-/// frame's own raw bytes, for the waiting method to decode; anything else — another service, an
-/// id nobody is waiting on, an unrecognised `kind` — is dropped.
+/// Dispatches one inbound frame by its `kind`: heartbeat, a matching `reply` resumed for the
+/// waiting method to decode, or dropped where nothing here is waiting on it.
 fn actor_handle_message(named: &str) -> String {
     format!(
         "  private func handleMessage(_ text: String) async {{\n    \
@@ -398,10 +359,8 @@ fn actor_heartbeat_machinery() -> String {
         .to_owned()
 }
 
-/// Tears the transport down once, whether reached from the socket's own close, a missed pong, or
-/// the transport's own [`actor_close_method`]: stops the heartbeat, ends the inbound stream, and
-/// resumes every request still waiting with `nil` — a value, not a thrown error — which each
-/// waiting method reads as the transport-failure fault.
+/// Tears the transport down once. Resumes every request still waiting with `nil` — a value, not
+/// a thrown error — which each waiting method reads as the transport-failure fault.
 fn actor_handle_close() -> String {
     "  private func handleClose() {\n    \
      guard !closed else { return }\n    \
