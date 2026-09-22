@@ -23,6 +23,8 @@ mod dart_ws_client_tests;
 mod http_client_tests;
 #[cfg(feature = "zod")]
 mod http_service_tests;
+#[cfg(feature = "kotlin")]
+mod kotlin_http_client_tests;
 #[cfg(feature = "zod")]
 mod service_tests;
 #[cfg(feature = "swift")]
@@ -48,6 +50,8 @@ use super::dart_ws_client;
 use super::http_client;
 #[cfg(feature = "zod")]
 use super::http_service;
+#[cfg(feature = "kotlin")]
+use super::kotlin_http_client;
 #[cfg(feature = "zod")]
 use super::service;
 #[cfg(feature = "swift")]
@@ -467,6 +471,177 @@ const DART_UNIT_SUCCESS_HTTP_SERVICE: &str = "
     }
 ";
 
+/// A service exercising every `http(...)` shape the Kotlin client answers for. Kotlin-gated mirror
+/// of `DART_HTTP_SERVICE`, since a build can carry `kotlin` without `dart`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_HTTP_SERVICE: &str = "
+    pub trait DocumentClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"POST\",
+            path = \"/documents\",
+            error_status(TitleTaken = 409)
+        ))]
+        async fn create_document(
+            &self,
+            ctx: &Ctx,
+            req: CreateDocumentRequest,
+        ) -> Result<CreateDocumentResponse, CreateDocumentError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/versions/{version_id}\",
+            ok_status = 200,
+            header_in(\"range\" = byte_range),
+            header_out(\"etag\"),
+            error_status(NotFound = 404, VersionGone = 410),
+        ))]
+        async fn get_version(
+            &self,
+            ctx: &Ctx,
+            req: GetVersionRequest,
+            byte_range: Option<String>,
+        ) -> Result<(VersionResponse, String), GetVersionError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/search\",
+            error_status(SearchFailed = 500),
+        ))]
+        async fn search_documents(
+            &self,
+            ctx: &Ctx,
+            q: Option<String>,
+            tags: Option<Vec<String>>,
+        ) -> Result<SearchResponse, SearchError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/thumbnail\",
+            error_status(NotFound = 404),
+            body = \"bytes\",
+        ))]
+        async fn get_thumbnail(
+            &self,
+            ctx: &Ctx,
+            document_id: String,
+        ) -> Result<(Vec<u8>, String), ThumbnailError>;
+
+        #[service_schema_op(one_way, http(method = \"DELETE\", path = \"/documents/{document_id}\"))]
+        async fn purge_document(&self, ctx: &Ctx, document_id: String);
+
+        async fn sweep_documents(&self, ctx: &Ctx) -> Result<SweepReport, SweepError>;
+    }
+";
+
+/// A service declaring one `body = \"bytes\"` operation composing `header_out` onto its own tuple.
+/// Kotlin-gated mirror of `BYTES_HTTP_SERVICE`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_BYTES_HEADER_OUT_SERVICE: &str = "
+    pub trait ThumbnailClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/documents/{document_id}/thumbnail\",
+            body = \"bytes\",
+            header_out(\"x-document-id\"),
+            error_status(NotFound = 404),
+        ))]
+        async fn get_thumbnail(
+            &self,
+            ctx: &Ctx,
+            document_id: String,
+        ) -> Result<(Vec<u8>, String, String), ThumbnailError>;
+    }
+";
+
+/// A service declaring two `body = \"stream\"` operations. Kotlin-gated mirror of
+/// `DART_STREAM_HTTP_SERVICE`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_STREAM_HTTP_SERVICE: &str = "
+    pub trait ContentClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/files/{file_id}\",
+            body = \"stream\",
+            error_status(NotFound = 404),
+        ))]
+        async fn get_file(
+            &self,
+            ctx: &Ctx,
+            file_id: String,
+        ) -> Result<StreamedAnswer, ContentError>;
+
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/files/{file_id}/tagged\",
+            body = \"stream\",
+            header_out(\"x-checksum\"),
+            error_status(NotFound = 404),
+        ))]
+        async fn get_tagged_file(
+            &self,
+            ctx: &Ctx,
+            file_id: String,
+        ) -> Result<(StreamedAnswer, String), ContentError>;
+    }
+";
+
+/// A service declaring one `body = \"multipart\"` operation. Kotlin-gated mirror of
+/// `MULTIPART_HTTP_SERVICE`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_MULTIPART_HTTP_SERVICE: &str = "
+    pub trait UploadClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"POST\",
+            path = \"/folders/{folder_id}/documents\",
+            body = \"multipart\",
+            part(\"file\" = attachment),
+            error_status(TooLarge = 413),
+        ))]
+        async fn upload_document(
+            &self,
+            ctx: &Ctx,
+            folder_id: String,
+            title: String,
+            description: Option<String>,
+            attachment: Box<dyn upload_client_service_schema::BodySource + Send>,
+        ) -> Result<UploadResponse, UploadError>;
+    }
+";
+
+/// The same single-placeholder shape `SINGLE_PLACEHOLDER_HTTP_SERVICE`/
+/// `DART_SINGLE_PLACEHOLDER_HTTP_SERVICE` declare, gated on `kotlin` so a build can carry it
+/// without `zod` or `dart`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_SINGLE_PLACEHOLDER_HTTP_SERVICE: &str = "
+    pub trait ConversationClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/conversations/{conversation_id}/window\",
+            error_status(NotFound = 404),
+        ))]
+        async fn window(
+            &self,
+            ctx: &Ctx,
+            req: WindowRequest,
+        ) -> Result<WindowPage, WindowError>;
+
+        #[service_schema_op(one_way, http(
+            method = \"DELETE\",
+            path = \"/conversations/{conversation_id}\",
+        ))]
+        async fn purge_conversation(&self, ctx: &Ctx, conversation_id: String);
+    }
+";
+
+/// A reply operation whose success is `()`. Kotlin-gated mirror of `DART_UNIT_SUCCESS_HTTP_SERVICE`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_UNIT_SUCCESS_HTTP_SERVICE: &str = "
+    pub trait PingClientService<Ctx> {
+        #[service_schema_op(http(method = \"POST\", path = \"/v1/ping\"))]
+        async fn ping(&self, ctx: &Ctx, req: PingRequest) -> Result<(), PingError>;
+    }
+";
+
 /// A service exercising both operation shapes `ws_rpc` answers for: a reply operation over a
 /// `Named` message, and a one-way operation. Named for the design's own running example.
 #[cfg(feature = "dart")]
@@ -763,6 +938,11 @@ fn dart_result_of(source: &str) -> Vec<String> {
 #[cfg(feature = "swift")]
 fn swift_http_client_of(source: &str) -> String {
     swift_http_client::emit(&parsed(source)).join("\n\n")
+}
+
+#[cfg(feature = "kotlin")]
+fn kotlin_http_client_of(source: &str) -> String {
+    kotlin_http_client::emit(&parsed(source)).join("\n\n")
 }
 
 fn parsed(source: &str) -> ServiceDef {
@@ -1180,5 +1360,26 @@ fn dart_definition_asks_for_the_generated_messages_a_declared_message_is_registe
     assert!(
         !rendered.contains("available_balance_request_dart"),
         "the message the author declared is registered by the author, not here. Got: {rendered}"
+    );
+}
+
+#[cfg(feature = "kotlin")]
+#[test]
+fn a_build_with_kotlin_publishes_kotlin_http_client() {
+    let rendered = registration(MIXED_SERVICE);
+    assert!(
+        rendered.contains("pub fn kotlin_http_client"),
+        "got: {rendered}"
+    );
+}
+
+#[cfg(not(feature = "kotlin"))]
+#[test]
+fn a_build_without_kotlin_publishes_no_kotlin_http_client() {
+    let rendered = registration(MIXED_SERVICE);
+    assert!(
+        !rendered.contains("kotlin_http_client"),
+        "an artifact behind a feature that is off is absent rather than emitted empty. \
+         Got: {rendered}"
     );
 }
