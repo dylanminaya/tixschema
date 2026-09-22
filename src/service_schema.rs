@@ -136,8 +136,7 @@ pub fn exec_service_schema(args: TokenStream, input: TokenStream) -> TokenStream
                     // each name to the crate root from wherever the service was written.
                     let transports = transport::emit(&service, &wanted.transports);
                     // Every language's generated clients are strings rather than callers of
-                    // anything private, so they stay at the trait's scope where a bundle can name
-                    // them.
+                    // anything private, so they stay at the trait's scope.
                     let generated_clients = generated_clients(&service, wanted.non_exhaustive);
                     quote! {
                         #messages
@@ -671,10 +670,8 @@ fn emitted_trait(declared: &ItemTrait) -> ItemTrait {
     emitted
 }
 
-/// The registry every language's generated client hangs off — `<Service>Schema` and the accessors
-/// each enabled language feature publishes on it. `typescript`, `dart`, `swift` and `kotlin` each
-/// gate their own accessors independently inside [`emit_generated_clients`], so this wrapper needs
-/// only `serde`.
+/// `typescript`, `dart`, `swift` and `kotlin` each gate their own accessors independently inside
+/// [`emit_generated_clients`], so this wrapper needs only `serde`.
 #[cfg(feature = "serde")]
 fn generated_clients(service: &parse::ServiceDef, non_exhaustive: bool) -> TokenStream {
     emit_generated_clients(service, non_exhaustive)

@@ -255,8 +255,7 @@ const ATTACHMENT_TAIL: &str = "}, (fault) => {
 
 /// Everything above the HTTP implementation's members: the same [`IMPLEMENTATION_MEMBERS`] the
 /// bare factory and the `ws_rpc` attachment are checked with, reaching
-/// `createProbeServiceHttpDispatcher` instead -- the same `ProbeServiceImpl<Ctx>` satisfies all
-/// three, since the HTTP dispatcher wraps the bus-shaped one rather than declaring its own.
+/// `createProbeServiceHttpDispatcher` instead.
 #[cfg(feature = "zod")]
 const HTTP_IMPLEMENTATION_HEAD: &str = r#"import {
   createProbeServiceHttpDispatcher,
@@ -582,10 +581,8 @@ fn an_implementation_missing_one_operation_is_refused_at_the_dispatcher_attachme
     );
 }
 
-/// The positive half of `ts_http_service()`'s own seal: the same implementation the bare factory
-/// and the `ws_rpc` attachment accept is accepted where it reaches
-/// `createProbeServiceHttpDispatcher`, and the returned dispatcher answers a whole
-/// `ProbeServiceHttpRequest` with a whole `ProbeServiceHttpResponse`.
+/// The positive half of `ts_http_service()`'s own seal: the same implementation is accepted where
+/// it reaches `createProbeServiceHttpDispatcher`, wrapping the same `ProbeServiceImpl<Ctx>`.
 #[cfg(feature = "zod")]
 #[test]
 fn a_complete_implementation_is_accepted_at_the_http_dispatcher_factory() {
@@ -602,9 +599,7 @@ fn a_complete_implementation_is_accepted_at_the_http_dispatcher_factory() {
 }
 
 /// The negative half: an implementation missing one operation, handed to
-/// `createProbeServiceHttpDispatcher` exactly as it is handed to the bare dispatcher factory
-/// above, is refused the same way -- the HTTP dispatcher wraps the same `ProbeServiceImpl<Ctx>`
-/// rather than declaring its own.
+/// `createProbeServiceHttpDispatcher` exactly as above, is refused the same way.
 #[cfg(feature = "zod")]
 #[test]
 fn an_implementation_missing_one_operation_is_refused_at_the_http_dispatcher_factory() {

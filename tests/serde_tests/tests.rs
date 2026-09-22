@@ -386,8 +386,6 @@ fn test_enum_field_rename() {
     assert!(!type_declaration.contains("\"Green\""));
 }
 
-/// The internally tagged reader reads the renamed tag key and inverts the kebab-cased wire name
-/// back to the Rust variant it names.
 #[test]
 #[cfg(feature = "typescript")]
 fn test_internally_tagged_variant_reader_reads_the_tag_key() {

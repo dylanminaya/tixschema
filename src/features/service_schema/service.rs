@@ -51,9 +51,8 @@ pub fn emit(service: &ServiceDef) -> Vec<String> {
 }
 
 /// One arm of the dispatcher's `switch`: parse the payload, read and decode each bound header and
-/// part, then call. The order is the point — an implementation may assume its message is valid
-/// and every bound value present or `undefined` as declared, because neither ever reaches it
-/// otherwise.
+/// part, then call. An implementation may assume its message is valid and every bound value
+/// present or `undefined` as declared, because neither ever reaches it otherwise.
 fn arm(service: &ServiceDef, operation: &OperationDef) -> String {
     let wire = &operation.wire_name;
     let call = &operation.ts_name;
@@ -77,10 +76,9 @@ fn arm(service: &ServiceDef, operation: &OperationDef) -> String {
     format!("      case \"{wire}\": {{\n{received}{bindings}{answering}\n      }}")
 }
 
-/// The statements that look up and decode each `header_in` and `part` binding, in declaration
-/// order, refusing through the same framed fault a bad payload gets where a required one is
-/// missing. Answers with the statements and the local each one binds, ready to append to the
-/// implementation's call — mirrors the Rust dispatcher's own `header_in_let`/`multipart_part_let`.
+/// The statements that look up and decode each `header_in` and `part` binding, refusing through
+/// the same framed fault a bad payload gets where a required one is missing — mirrors the Rust
+/// dispatcher's own `header_in_let`/`multipart_part_let`.
 fn binding_reads(
     service: &ServiceDef,
     operation: &OperationDef,

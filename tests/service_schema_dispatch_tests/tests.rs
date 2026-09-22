@@ -2440,8 +2440,7 @@ fn a_bytes_operations_declared_error_still_answers_json() {
     assert_eq!(response.body(), br#"{"errorCode":"not-found"}"#);
 }
 
-/// An `http(...)` group declaring no `error_status` table answers every declared error at the
-/// fixed default-binding status, exactly like an operation naming no `http(...)` group at all.
+/// Exactly like an operation naming no `http(...)` group at all.
 #[test]
 fn a_table_less_http_group_answers_every_declared_error_at_the_default_binding_status() {
     let (reached, not_found) = http_dispatched("GET", "/documents/missing/flag", "", &[], b"");
@@ -2454,8 +2453,6 @@ fn a_table_less_http_group_answers_every_declared_error_at_the_default_binding_s
     assert_eq!(already.body(), br#"{"errorCode":"already-flagged"}"#);
 }
 
-/// A struct variant and a tuple variant, mapped in the same `error_status` table as a unit
-/// variant, each answer their own declared status with the variant serialized as the body.
 #[test]
 fn a_struct_variant_and_a_tuple_variant_each_answer_their_own_declared_status() {
     let (reached, locked) = http_dispatched("GET", "/documents/locked/vault", "", &[], b"");

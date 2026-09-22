@@ -250,14 +250,7 @@ fn the_seal_leaves_the_framing_a_caller_narrows_on_untouched() {
     );
 }
 
-// -------------------------------------------------------------------------------------------
-// A bound header or part reaches the implementation as an argument, the way the Rust trait
-// method receives it
-// -------------------------------------------------------------------------------------------
-
-/// An `Option<_>` `header_in` binding adds one more argument after the message, named and typed
-/// exactly as the client's own method takes it — never optional-key sugar, since the dispatcher
-/// always hands it a value or `undefined` explicitly.
+/// Never optional-key sugar — the dispatcher always hands a value or `undefined` explicitly.
 #[test]
 fn an_optional_header_in_binding_adds_one_argument_after_the_message() {
     let written = service_of(MIXED_HTTP_SERVICE);
@@ -275,8 +268,7 @@ fn an_optional_header_in_binding_adds_one_argument_after_the_message() {
     );
 }
 
-/// A `part(...)` binding adds its own argument the same way, typed `unknown` — a part's value is
-/// carried exactly as it arrived, never decoded.
+/// A part's value is carried exactly as it arrived, never decoded.
 #[test]
 fn a_part_binding_adds_its_own_argument_typed_unknown() {
     let written = service_of(MULTIPART_HTTP_SERVICE);
@@ -289,8 +281,7 @@ fn a_part_binding_adds_its_own_argument_typed_unknown() {
     );
 }
 
-/// A required (non-`Option`) `header_in` binding adds a plainly-typed argument, with no `|
-/// undefined` — the dispatcher refuses a missing one before the implementation is ever reached.
+/// The dispatcher refuses a missing one before the implementation is ever reached.
 #[test]
 fn a_required_header_in_binding_adds_a_plainly_typed_argument() {
     let written = service_of(REQUIRED_HEADER_HTTP_SERVICE);
@@ -303,8 +294,6 @@ fn a_required_header_in_binding_adds_a_plainly_typed_argument() {
     );
 }
 
-/// An operation with no `header_in` or `part(...)` binding is unchanged: the message is still
-/// the only argument after the context.
 #[test]
 fn an_operation_with_no_binding_takes_no_extra_argument() {
     let written = service_of(MIXED_HTTP_SERVICE);
@@ -317,10 +306,6 @@ fn an_operation_with_no_binding_takes_no_extra_argument() {
     );
 }
 
-/// The dispatcher arm for `get_version` (`MIXED_HTTP_SERVICE`): the optional header is looked up
-/// case-insensitively, decoded to `undefined` where absent, and handed on as the call's third
-/// argument, after the context and the parsed message — the same order the Rust dispatcher's own
-/// `call_arguments` builds.
 #[test]
 fn the_arm_looks_up_an_optional_header_and_passes_it_to_the_call() {
     let written = service_of(MIXED_HTTP_SERVICE);
@@ -348,10 +333,6 @@ fn the_arm_looks_up_an_optional_header_and_passes_it_to_the_call() {
     );
 }
 
-/// The dispatcher arm for `get_version` on `REQUIRED_HEADER_HTTP_SERVICE`: a required header
-/// absent from the request answers the same framed `failed-validation` fault a bad payload gets,
-/// naming the header in the issue's `path` exactly as a zod issue would, before the
-/// implementation is ever called.
 #[test]
 fn a_missing_required_header_answers_the_same_framed_fault_a_bad_payload_gets() {
     let written = service_of(REQUIRED_HEADER_HTTP_SERVICE);
@@ -390,9 +371,6 @@ fn a_missing_required_header_answers_the_same_framed_fault_a_bad_payload_gets() 
     );
 }
 
-/// The dispatcher arm for `upload_document` (`MULTIPART_HTTP_SERVICE`): the bound part is looked
-/// up by name, a missing one answers the same framed fault naming the part, and a present one is
-/// handed on to the call untouched.
 #[test]
 fn the_arm_looks_up_a_bound_part_and_refuses_a_missing_one_through_the_same_fault() {
     let written = service_of(MULTIPART_HTTP_SERVICE);

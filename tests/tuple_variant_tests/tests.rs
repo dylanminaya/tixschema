@@ -1433,8 +1433,7 @@ fn test_attribute_less_enum_typescript_is_the_externally_tagged_union() {
     );
 }
 
-/// Test 19a2: the externally tagged reader reads the object's sole key for a payload variant, and
-/// the bare string itself for the unit variant that writes no key.
+/// Test 19a2: the externally tagged reader reads the sole key, or the bare string for a unit variant.
 #[test]
 #[cfg(feature = "typescript")]
 fn test_attribute_less_enum_variant_reader_reads_the_sole_key_or_the_bare_string() {
@@ -1683,8 +1682,6 @@ fn test_renamed_variant_key_is_the_wire_name_in_zod() {
     assert!(zod.contains("z.literal(\"unitThing\")"), "Got: {zod}");
 }
 
-/// The reader inverts both a variant's own rename and the container's `rename_all` back to the
-/// Rust name they were declared with.
 #[test]
 #[cfg(feature = "typescript")]
 fn test_renamed_variant_key_reader_inverts_the_rename_and_the_rename_all() {
@@ -2432,8 +2429,7 @@ fn test_a_variant_carrying_no_dropped_slot_describes_unchanged_in_typescript() {
         ),
     ] {
         // Scoped to the type declaration alone: the `$Variant` reader appended after it on both
-        // sides also opens and closes braces, which would otherwise throw off the `rsplit_once`
-        // search for the type's own trailing member.
+        // sides also opens and closes braces, which would throw off `rsplit_once` below.
         let dropped_type = dropped.split("\n\n").next().unwrap();
         let kept_type = kept.split("\n\n").next().unwrap();
         let member = kept_type

@@ -13,11 +13,9 @@
 //!
 //! # A caller reads the outcome; one-way still throws
 //!
-//! The TypeScript half answers every reply with a `{ ok, value | error }` envelope; the Dart half
-//! answers with [`super::dart_result`]'s own sealed pair instead — a reply operation here answers
-//! `Future<{Service}{Operation}Result>` and never throws for a declared error or a fault. A
-//! one-way operation still answers `Future<void>` and throws the fault-only `{Service}HttpRefusal`,
-//! having no reply arm to carry a fault through.
+//! A reply operation answers `Future<{Service}{Operation}Result>` — [`super::dart_result`]'s own
+//! sealed pair — and never throws for a declared error or a fault. A one-way operation still
+//! answers `Future<void>` and throws the fault-only `{Service}HttpRefusal`.
 //!
 //! # The fault is the same generated type every other surface answers faults through
 //!

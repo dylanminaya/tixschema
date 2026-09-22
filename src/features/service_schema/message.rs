@@ -66,9 +66,8 @@ pub fn binding_params(shape: &HttpShape) -> Vec<(String, String)> {
 }
 
 /// Mirrors the Rust `decode_expr`: a `Vec<...>` splits `raw` on `,` and coerces each piece the
-/// same way; otherwise a boolean text, a numeric coercion, or the text itself. Read by the REST
-/// server's own query and path decoding and by the dispatcher's own header and part decoding, so
-/// both emitters coerce a raw wire string through one rule.
+/// same way; otherwise a boolean text, a numeric coercion, or the text itself. Shared by the REST
+/// server's query/path decoding and the dispatcher's header/part decoding.
 pub fn decode_ts_expr(ty: &Type, raw: &str, prefix: &str) -> String {
     let base = option_inner(ty).unwrap_or(ty);
     if let Some(inner) = vec_inner(base) {

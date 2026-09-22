@@ -518,9 +518,8 @@ mod the_bundle_one_registration_line_produces {
             let Some((_, after_req)) = taken.split_once("req: ") else {
                 continue;
             };
-            // `req: {Type}` is followed by `)` on a binding-free member and by `, {name}: {Type},
-            // ...` on one that reaches for a bound header or part — either way the message's own
-            // type ends at the first comma, or at the end where there is none.
+            // The message's own type ends at the first comma (a bound header or part follows)
+            // or at the end where there is none.
             let message = after_req
                 .split_once(',')
                 .map_or(after_req, |(head, _)| head);

@@ -684,8 +684,7 @@ const DART_WS_SERVICE: &str = "
     }
 ";
 
-/// A service exercising every `http(...)` shape the Swift client answers for. Swift-gated mirror
-/// of `DART_HTTP_SERVICE`.
+/// Every `http(...)` shape the Swift client answers for. Swift-gated mirror of `DART_HTTP_SERVICE`.
 #[cfg(feature = "swift")]
 const SWIFT_HTTP_SERVICE: &str = "
     pub trait DocumentClientService<Ctx> {

@@ -133,8 +133,7 @@ mod typescript {
         }
     }
 
-    /// A variant's name does not depend on the arguments a generic enum is filled with, so every
-    /// flavour publishes the same plain one-argument reader — never a factory taking a schema.
+    /// Never a factory taking a schema argument.
     #[test]
     fn every_enum_flavour_publishes_the_same_one_argument_reader() {
         for (flavour, ts) in [

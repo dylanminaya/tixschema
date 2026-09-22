@@ -1,11 +1,6 @@
-//! `ts_http_service()`, read off the emitted text.
-//!
-//! What these prove and what they cannot: the structure of the emitted TypeScript -- the route
-//! table, the request and response shapes, the fault handler and its default, the three helpers,
-//! and the dispatcher's own message assembly and status mapping. No TypeScript toolchain is
-//! reachable here, so none of them type-checks the bundle;
-//! `tests/service_schema_typescript_tests/type_check.rs` is what proves a complete implementation
-//! compiles against the emitted dispatcher.
+//! `ts_http_service()`, read off the emitted text's structure. No TypeScript toolchain is
+//! reachable here; `tests/service_schema_typescript_tests/type_check.rs` is what proves a
+//! complete implementation compiles against the emitted dispatcher.
 
 use super::{
     BYTES_HTTP_SERVICE, EMITTED_CLIENT_TEST_SERVICE, MIXED_HTTP_SERVICE, MULTIPART_HTTP_SERVICE,
@@ -180,8 +175,6 @@ fn exported_names_follow_the_service_and_lower_camel_case_convention() {
     }
 }
 
-/// The route table and the dispatcher's own arms both walk the trait in the order it declared its
-/// operations, never re-sorted.
 #[test]
 fn declaration_order_is_preserved_in_the_route_table_and_the_dispatcher_arms() {
     let written = http_service_of(MIXED_HTTP_SERVICE);
@@ -230,8 +223,6 @@ fn both_shapes_carry_uint8array_bodies_and_the_requests_own_content_type_is_neve
     );
 }
 
-/// H8, the wire-scalar rule: a `Named` message with exactly one placeholder over a recognised
-/// scalar type answers with that one captured, uncoerced string — never an object.
 #[test]
 fn a_single_scalar_placeholder_message_is_the_placeholder_itself() {
     let written = http_service_of(MIXED_HTTP_SERVICE);
@@ -243,8 +234,6 @@ fn a_single_scalar_placeholder_message_is_the_placeholder_itself() {
     );
 }
 
-/// H8, the author-declared rule: every placeholder is inserted under its own written spelling as
-/// a plain string, and nothing else is read — not the query, and not the body on a bodied method.
 #[test]
 fn an_author_declared_message_takes_only_its_placeholders_as_strings() {
     let written = http_service_of(MIXED_HTTP_SERVICE);
@@ -260,8 +249,6 @@ fn an_author_declared_message_takes_only_its_placeholders_as_strings() {
     );
 }
 
-/// H8, the generated rule: a placeholder-bound field is coerced through its own type; every other
-/// field comes from the query, with its own numeric or boolean coercion.
 #[test]
 fn a_generated_bodyless_message_reads_its_unbound_fields_off_the_query_with_their_own_coercion() {
     let written = http_service_of(QUERY_HTTP_SERVICE);
@@ -283,8 +270,6 @@ fn a_generated_bodyless_message_reads_its_unbound_fields_off_the_query_with_thei
     );
 }
 
-/// An operation declaring no `error_status` table answers 422 for every declared error and calls
-/// no `{Enum}$Variant` reader at all.
 #[test]
 fn an_operation_with_no_error_status_table_answers_422_and_calls_no_reader() {
     let written = http_service_of(QUERY_HTTP_SERVICE);
@@ -298,11 +283,7 @@ fn an_operation_with_no_error_status_table_answers_422_and_calls_no_reader() {
     );
 }
 
-/// A `header_in` binding — bound or not — is read and refused by `create{Service}Dispatcher`
-/// itself (see `service_tests`), never by this module: this server keeps no presence check of its
-/// own for either the optional binding `MIXED_HTTP_SERVICE` declares or the required one
-/// `REQUIRED_HEADER_HTTP_SERVICE` declares, and it never names the header's own parameter — it
-/// only ever hands the whole request's own `headers` array to `dispatch`.
+/// Read and refused by the dispatcher itself, not this module — see `service_tests`.
 #[test]
 fn a_header_in_binding_is_read_by_the_dispatcher_not_by_this_server() {
     for source in [MIXED_HTTP_SERVICE, REQUIRED_HEADER_HTTP_SERVICE] {
@@ -324,9 +305,7 @@ fn a_header_in_binding_is_read_by_the_dispatcher_not_by_this_server() {
     }
 }
 
-/// A `body = "bytes"` reply destructures the bytes, their content type, and any declared
-/// `header_out` element off `envelope.value`, and answers the raw bytes bare rather than through
-/// the shared JSON `answer` helper — mirroring `bytes_answer_block`.
+/// Mirrors the Rust `bytes_answer_block`.
 #[test]
 fn a_bytes_reply_answers_the_raw_bytes_with_their_content_type_and_declared_headers() {
     let written = http_service_of(BYTES_HTTP_SERVICE);
@@ -340,9 +319,7 @@ fn a_bytes_reply_answers_the_raw_bytes_with_their_content_type_and_declared_head
     );
 }
 
-/// A `body = "stream"` reply answers `206` with `content-range` for a partial answer and the
-/// declared `ok_status` with no extra header for a full one, either way handing the body on
-/// undrained — mirroring `stream_answer_block`.
+/// Mirrors the Rust `stream_answer_block`.
 #[test]
 fn a_stream_reply_answers_206_or_the_declared_status_off_the_streamed_records_own_range() {
     let written = http_service_of(STREAM_HTTP_SERVICE);
@@ -353,11 +330,7 @@ fn a_stream_reply_answers_206_or_the_declared_status_off_the_streamed_records_ow
     );
 }
 
-/// A `header_in`/`part(...)`-free multipart field is still read off the request's own `parts`
-/// here, the way an unbound query field is read off the query string. A `part(...)` binding
-/// itself is neither checked nor read here at all: the request's own `parts` array is handed to
-/// `dispatch` whole, and `create{Service}Dispatcher` is where a bound part is looked up, refused
-/// if missing, and read — see `service_tests`.
+/// A bound part is neither checked nor read here — see `service_tests`.
 #[test]
 fn a_multipart_operation_reads_its_own_fields_off_parts_and_hands_a_bound_part_to_the_dispatcher() {
     let written = http_service_of(MULTIPART_HTTP_SERVICE);
@@ -381,9 +354,7 @@ fn a_multipart_operation_reads_its_own_fields_off_parts_and_hands_a_bound_part_t
     );
 }
 
-/// H8, the "nothing at all" rule: a bodyless operation carrying no field beside the context
-/// assembles the same message the Rust dispatcher does — the empty object — never `null`, which
-/// `z.strictObject({})` refuses.
+/// Never `null`, which `z.strictObject({})` refuses.
 #[test]
 fn a_bodyless_operation_with_no_field_assembles_the_empty_object_not_null() {
     let written = http_service_of(

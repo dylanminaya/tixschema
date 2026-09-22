@@ -1,38 +1,6 @@
 //! The TypeScript `http_rest` server: a route table, plain-terms request and response shapes, a
-//! fault handler with the Rust transport's own defaults, and one dispatcher that matches, assembles
-//! the message the way the Rust `dispatch` does, drives `create{Service}Dispatcher`, and maps the
-//! outcome to a status and a body.
-//!
-//! # Names no web framework
-//!
-//! The dispatcher takes a whole request and answers a whole response; nothing here names the
-//! library that finally carries the call. Binding it to a real listener is the hosting
-//! application's own adapter, exactly as [`super::http_client`]'s own transport seam names none
-//! either.
-//!
-//! # The route table is data, not a second entry point
-//!
-//! The dispatcher does its own path matching, in declaration order, over the same template the
-//! table publishes. An application that wants one framework handler per route reads the table; one
-//! that wants a single catch-all passes every request straight to the dispatcher. Either way the
-//! dispatcher matches again — there is no shortcut that skips it.
-//!
-//! # A declared error's status, read off the value
-//!
-//! An operation's `error_status` table maps a Rust variant name to a status, and the value on the
-//! wire carries no such name of its own except in the position each enum's own serde form puts it.
-//! [`error_status_closure`] reaches for the `{Enum}$Variant` reader that enum's own
-//! `#[model_schema]` expansion publishes — never a switch this module writes over the wire shape
-//! itself — and is called at all only where the table names more than one distinct status; one
-//! status (or none) needs no reader.
-//!
-//! # A bound header or multipart part reaches the dispatcher, not this module
-//!
-//! `create{Service}Dispatcher` — [`super::service`]'s own `dispatcher` — is where a `header_in`
-//! binding and a `part(...)` binding are read, decoded and refused, the same way it already reads
-//! and refuses the message. This module keeps no presence check of its own: it hands the request's
-//! own `headers` and, where the service declares multipart, its own `parts` straight through to
-//! `dispatch`, exactly as it hands the assembled message through.
+//! fault handler, and one dispatcher that assembles the message the way the Rust `dispatch` does
+//! and maps the outcome to a status and a body. Names no web framework.
 
 use super::message;
 use super::result::stream_success_ts_type;
@@ -50,10 +18,7 @@ use core::fmt::Write as _;
 use syn::Type;
 
 /// The three facts every dispatcher-building function below reads off the service, bundled so
-/// none of them carries more of its own parameters than a reader can hold at once: the published
-/// name, the camelCase prefix its own helpers are named under, and whether it declares a
-/// multipart operation at all — which decides whether `request.parts`/`parts` is threaded through
-/// beside `request.headers`/`headers`.
+/// none of them carries more of its own parameters than a reader can hold at once.
 struct DispatcherContext<'ctx> {
     has_multipart: bool,
     named: &'ctx str,
@@ -293,9 +258,8 @@ fn error_status_closure(shape: &HttpShape, error_type: &Type) -> String {
     if shape.error_status.is_empty() {
         return format!("() => {DEFAULT_BINDING_ERROR_STATUS}");
     }
-    // The parser has already refused a multi-status table on an untagged enum — see
-    // `untagged_multi_status_refusal` in `service_schema::parse` — so what remains maps every
-    // variant to one status.
+    // The parser already refuses a multi-status table on an untagged enum, so what remains
+    // maps every variant to one status.
     if is_recorded_untagged_enum(error_type) {
         let single = distinct_error_statuses(shape)
             .first()
@@ -522,8 +486,7 @@ fn dispatcher_fn(service: &ServiceDef, named: &str, prefix: &str) -> String {
 
 /// The shared closure every JSON-reply, multipart-reply and one-way arm answers through. Bytes,
 /// stream and `header_out` replies build their own response instead — see [`custom_reply_block`].
-/// Takes the whole request rather than destructured fields, so it can hand `headers` and — on a
-/// multipart service — `parts` to the dispatcher exactly as it hands the assembled payload.
+/// Takes the whole request so it can hand `headers` and `parts` to the dispatcher unchecked.
 fn answer_fn(ctx: &DispatcherContext) -> String {
     let DispatcherContext {
         named,
@@ -566,8 +529,7 @@ fn path_token_list(path: &[PathSegment]) -> String {
 
 /// One `if (method === "...") { ... }` arm: comment, path match, placeholder destructure, the
 /// assembled message, and the answer. A bound `header_in` or `part(...)` binding is read and
-/// refused by the dispatcher itself, not here — this arm hands the request's own `headers` and
-/// `parts` through unchecked.
+/// refused by the dispatcher itself, not here.
 fn arm(operation: &OperationDef, ctx: &DispatcherContext) -> String {
     let prefix = ctx.prefix;
     let shape = HttpShape::of(operation);

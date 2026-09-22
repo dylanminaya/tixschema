@@ -169,10 +169,8 @@ pub fn stand_down_modules(required: &[&str], surface: &str) {
     );
 }
 
-// -------------------------------------------------------------------------------------------
 // Kotlin: a two-step compile-then-run, and a classpath assembled from a directory rather than
 // a single named binary, since `kotlinx.serialization` needs its own compiler plugin.
-// -------------------------------------------------------------------------------------------
 
 /// Says a Kotlin-toolchain notice on stderr, once per run — reuses [`once`]'s own key ("kotlinc")
 /// for every reason a Kotlin group stands down, so the environment is told once rather than once
@@ -243,10 +241,9 @@ fn kotlin_toolchain() -> Option<KotlinToolchain> {
     })
 }
 
-/// Writes `source` as `main.kt`, compiles it with the serialization plugin against the three
-/// library jars, and runs the compiled jar under `java`. `None` says no toolchain piece was
-/// reachable and nothing ran; a piece named explicitly through `TIXSCHEMA_KOTLINC`/
-/// `TIXSCHEMA_JAVA` that still fails to start is a failure instead, matching [`run_in`]'s rule.
+/// Compiles `source` as `main.kt` against the three library jars and runs the resulting jar
+/// under `java`. `None` says no toolchain piece was reachable; a piece named explicitly that
+/// still fails to start is a failure instead, matching [`run_in`]'s rule.
 #[cfg(feature = "kotlin")]
 pub fn ran_kotlin(source: &str) -> Option<String> {
     let toolchain = kotlin_toolchain()?;
