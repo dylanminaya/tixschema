@@ -348,8 +348,7 @@ const QUERY_HTTP_SERVICE: &str = "
 
 /// The same declaration `tests/service_schema_emitted_client_tests/tests.rs` runs the emitted
 /// clients against — `ConversationId` a wire-scalar newtype, `purge_conversation` declared first,
-/// `window` second — which is what `ts_http_service()`'s own design document was executed
-/// against and is measured against verbatim.
+/// `window` second.
 #[cfg(all(feature = "typescript", feature = "zod"))]
 const EMITTED_CLIENT_TEST_SERVICE: &str = "
     pub trait ConversationClientService<Ctx> {
@@ -685,13 +684,8 @@ const DART_WS_SERVICE: &str = "
     }
 ";
 
-/// A service exercising every `http(...)` shape the Swift client answers for: a bodied `POST`
-/// naming its own message with a mapped error, a bodyless `GET` with a path carrying two
-/// placeholders on a `Named` message plus a `header_in` binding and a `header_out` tuple success,
-/// a bodyless `GET` whose unbound optional fields (a scalar and a `Vec`) build a query string, a
-/// `body = "bytes"` `GET` whose one argument is the message and the whole placeholder at once, a
-/// one-way `DELETE` in that same single-placeholder shape, and an operation naming no `http(...)`
-/// group at all. Swift-gated mirror of `DART_HTTP_SERVICE`.
+/// A service exercising every `http(...)` shape the Swift client answers for. Swift-gated mirror
+/// of `DART_HTTP_SERVICE`.
 #[cfg(feature = "swift")]
 const SWIFT_HTTP_SERVICE: &str = "
     pub trait DocumentClientService<Ctx> {

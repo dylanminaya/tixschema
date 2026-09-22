@@ -1,16 +1,6 @@
 //! Kotlin type generation with `kotlinx.serialization` annotations: one `kotlin_definition()` per
-//! `#[model_schema]` item in a `{snake}_kotlin` module, dispatched from `exec_model_schema` the way
-//! the Dart backend is. Unlike Dart, Kotlin has no built-in JSON codec — the compiler plugin
-//! `kotlinx.serialization` reads the annotations this module writes and generates the encoder and
-//! decoder itself, so most shapes carry nothing beyond `@Serializable`/`@SerialName`. The four
-//! shapes the plugin cannot express declaratively (an adjacently- or externally-tagged enum, an
-//! untagged enum, and a tuple) carry a small generated `KSerializer` beside them instead.
-//!
-//! Fully independent of the `typescript`/`zod`/`jsonschema` module-and-delegate machinery, exactly
-//! as `features::dart` is: it reads its own borrow of the item ahead of the
-//! `process_struct`/`process_enum`/`process_type_alias` dispatch and carries no factory-cache or
-//! forward-reference deferral of its own, Kotlin resolving a reference across the whole file
-//! regardless of declaration order just as Dart does.
+//! `#[model_schema]` item. Most shapes carry nothing beyond `@Serializable`/`@SerialName`; the four
+//! the compiler plugin cannot express declaratively carry a small generated `KSerializer` instead.
 
 use core::cell::{Cell, RefCell};
 use core::iter::once;
@@ -64,10 +54,8 @@ enum VariantPayload {
     Value(Box<FieldDef>),
 }
 
-/// What [`flatten_plan`] builds from a struct's fields: one `serialize_stmts` entry per field
-/// (own or flattened), one `deserialize_stmts` entry per field (own reads and flattened-struct
-/// `descriptor`-key reads interleaved, in field order, the map field's own read appended last so
-/// it can name every other field's own keys), and the constructor argument list in field order.
+/// What [`flatten_plan`] builds from a struct's fields: one `serialize_stmts`/`deserialize_stmts`
+/// entry per field in field order, and the constructor argument list in field order.
 struct FlattenPlan {
     ctor_args: Vec<String>,
     deserialize_stmts: Vec<String>,
@@ -90,15 +78,10 @@ struct DispatchedTaggedContext<'ctx> {
 }
 
 thread_local! {
-    /// The Kotlin class/enum name each Rust ident publishes — the one thing a reference to a
-    /// sibling item needs, since the reference's own field carries the type arguments. Independent
-    /// of the three-surface `ALIAS_INFO` registry in `crate::utils`, for the same reason
-    /// `DART_NAMES` is: Kotlin has no forward-reference or cycle problem to share bookkeeping over.
+    /// The Kotlin class/enum name each Rust ident publishes, read back by a sibling reference.
     static KOTLIN_NAMES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     /// The auxiliary top-level declarations a Tuple-shaped field earns — a wrapper `data class` and
-    /// the `KSerializer` that reads and writes it as a JSON array (see [`tuple_wrapper_typename`]).
-    /// Drained by [`kotlin_module_tokens`], the one choke point every dispatch path returns
-    /// through, so an item's own text always carries whatever its own fields queued.
+    /// its `KSerializer` (see [`tuple_wrapper_typename`]). Drained by [`kotlin_module_tokens`].
     static KOTLIN_TUPLE_AUX: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     /// Monotonic across the whole compilation, matching how `KOTLIN_NAMES` persists across
     /// invocations — never reset, since every tuple wrapper this module ever writes lands in the
@@ -120,10 +103,8 @@ pub fn kotlin_schema_dispatch(item: &Item, name_override: Option<&str>) -> Token
     }
 }
 
-/// The `u64`/`usize` width `field` is, or at any depth reaches — a `SiblingType`'s own generic
-/// arguments, a `Map`'s key and value, a `Tuple`'s elements — or `None` for a field with no such
-/// width anywhere. Kotlin has a `ULong` that could carry `u64`; the refusal exists instead for
-/// parity with the Swift target, which refuses the same two widths.
+/// The `u64`/`usize` width `field` is, or at any depth reaches, or `None`. Kotlin has a `ULong`
+/// that could carry `u64`; the refusal exists for parity with the Swift target instead.
 pub fn kotlin_refused_width(field: &FieldDef) -> Option<&'static str> {
     match &field.field_type {
         FieldDefType::U64 => Some("u64"),
@@ -161,8 +142,6 @@ pub fn kotlin_refused_width(field: &FieldDef) -> Option<&'static str> {
     }
 }
 
-/// Registers the Kotlin name `rust_ident` publishes under, for a later sibling reference to read
-/// back.
 fn register_kotlin_name(rust_ident: &str, export_name: &str) {
     KOTLIN_NAMES.with(|names| {
         names
@@ -180,8 +159,7 @@ fn lookup_kotlin_name(rust_ident: &str) -> Option<String> {
 
 /// Whether `attrs` carries a bare `#[serde(transparent)]` — the same test `model_schema.rs` and
 /// `features::dart` use to tell a branded newtype from an ordinary tuple struct, duplicated here
-/// for the same reason `features::dart` duplicates it rather than reaching for a `pub(crate)`
-/// widening: a dozen lines of plain `syn` parsing with no feature dependency of its own.
+/// rather than widened to `pub(crate)`.
 fn has_serde_transparent(attrs: &[syn::Attribute]) -> bool {
     for attr in attrs {
         if attr.path().is_ident("serde") {
@@ -221,9 +199,8 @@ fn single_slot_field(fields: &Fields, type_parameters: &[String]) -> FieldDef {
 }
 
 /// One field's `#[model_schema_prop(...)]` metadata, folded into the `FieldDef` `get_field_def`
-/// built for it — `get_field_def` reads the Rust type alone, so a field carrying `nullable` or
-/// `as_number` needs this filled in separately, exactly as `process_field` does for the other three
-/// surfaces.
+/// built for it — `get_field_def` reads the Rust type alone, so `nullable`/`as_number` need this
+/// filled in separately, as `process_field` does for the other three surfaces.
 fn field_def_with_prop_meta(name: &str, ty: &syn::Type, attrs: &[syn::Attribute]) -> FieldDef {
     let mut field_def = get_field_def(name, ty, "");
     field_def.model_schema_prop_meta = Some(parse_model_schema_prop_attributes(attrs));
@@ -315,7 +292,6 @@ fn is_nullable_flag(field: &FieldDef) -> bool {
         .is_some_and(|meta| meta.nullable)
 }
 
-/// Whether `field` carries `#[model_schema_prop(as_number)]`.
 #[cfg(feature = "chrono")]
 fn has_as_number(field: &FieldDef) -> bool {
     field
@@ -325,11 +301,8 @@ fn has_as_number(field: &FieldDef) -> bool {
 }
 
 /// Walks a named-field struct's or a struct-shaped enum variant's fields into [`KotlinField`]s,
-/// dropping any field a serde attribute takes off the wire in both directions. A field a serde
-/// attribute drops from serialization only (`skip_serializing_if`, on a field that is not itself
-/// `Option<T>`) is pushed a nullable level so it renders `T? = null` — kotlinx has no separate
-/// "absent key" spelling from "explicit null", so the two collapse the same way Dart's own
-/// `Map<String, dynamic>` makes them collapse.
+/// dropping any field a serde attribute takes off the wire in both directions. A field dropped
+/// from serialization only is pushed a nullable level, since kotlinx has no "absent key" spelling.
 fn collect_kotlin_fields(
     fields: &Fields,
     rule: RenameRule,
@@ -438,8 +411,7 @@ fn kotlin_base(field: &FieldDef) -> String {
 
 /// The Kotlin type `field` renders as: [`kotlin_base`] plus the `?` an [`FieldDef::is_optional`]
 /// field carries — one nullable spelling for both a bare `Option<T>` and
-/// `#[model_schema_prop(nullable)]`, the two differing only in whether the property also earns a
-/// `= null` default (see [`property_declaration`]).
+/// `#[model_schema_prop(nullable)]` (see [`property_declaration`] for the `= null` default).
 pub fn kotlin_typename(field: &FieldDef) -> String {
     let base = kotlin_base(field);
     if field.is_optional() {
@@ -534,8 +506,7 @@ fn kotlin_serializer_expr(field: &FieldDef, type_parameters: &[String]) -> Strin
             kotlin_serializer_expr(value, type_parameters)
         ),
         // None of these ever reaches a type parameter (see `field_reaches_type_parameter`), so
-        // this arm is unreached in practice; it stays total rather than a wildcard for the same
-        // reason `kotlin_refused_width` stays total, and renders exactly the fallback above.
+        // this arm is unreached in practice; it stays total rather than a wildcard.
         FieldDefType::Tuple(_)
         | FieldDefType::Unknown
         | FieldDefType::StringLiteral(_)
@@ -623,11 +594,8 @@ fn serializer_declaration(export_name: &str, type_parameters: &[String]) -> Stri
 }
 
 /// The Kotlin type name for a Tuple-shaped field: queues a wrapper `data class` plus the
-/// `KSerializer` that reads and writes it as a JSON array — the shape `kotlinx.serialization`
-/// carries no annotation for (a `Pair`/`Triple` writes `{"first":…,"second":…}`, the wrong shape) —
-/// and returns the wrapper's own name. Monotonically numbered rather than derived from the
-/// enclosing field's name, so two fields named alike in two different items never collide once
-/// every item's text is concatenated into one file.
+/// `KSerializer` that reads and writes it as a JSON array. Monotonically numbered so two fields
+/// named alike in two different items never collide.
 fn tuple_wrapper_typename(elements: &[FieldDef]) -> String {
     let index = KOTLIN_TUPLE_COUNTER.with(|counter| {
         let next = counter.get() + 1;
@@ -685,11 +653,8 @@ fn kotlin_module_ident(rust_ident: &str, span: proc_macro2::Span) -> Ident {
 }
 
 /// The module `{ident}_kotlin` publishes `kotlin_definition()` from — never a direct inherent
-/// `impl {ident}`, for the same reason `features::dart`'s `dart_module_tokens` gives: a Rust type
-/// alias resolves to its target under the orphan/coherence rules, so a module name is the one
-/// spelling every shape can publish under safely. The one choke point every dispatch path in this
-/// module returns through, so it also drains whatever [`KOTLIN_TUPLE_AUX`] the item's own fields
-/// queued and prepends it ahead of the item's own declaration.
+/// `impl {ident}`, since a Rust type alias resolves to its target under the orphan/coherence rules.
+/// The one choke point every dispatch path returns through, so it also drains [`KOTLIN_TUPLE_AUX`].
 fn kotlin_module_tokens(
     rust_ident: &str,
     span: proc_macro2::Span,
@@ -789,10 +754,8 @@ fn data_class_params(fields: &[KotlinField]) -> String {
         .join(", ")
 }
 
-/// `field`'s own type with any outer `Option` stripped — what a flatten field's inner type is,
-/// read for its plain serializer and descriptor regardless of whether the field itself is
-/// `Option<...>`. [`FieldDefType::Map`]'s key and value are untouched: a flatten field never wraps
-/// its own map in one more collection level.
+/// `field`'s own type with any outer `Option` stripped — the inner type a flatten field's plain
+/// serializer and descriptor read regardless of whether the field itself is `Option<...>`.
 fn flatten_base_field(field_def: &FieldDef) -> FieldDef {
     let mut base = field_def.clone();
     base.nullable_levels.clear();
@@ -831,8 +794,7 @@ fn own_field_plan(
 
 /// One flattened *struct* (or `Option<Struct>`) field's own statements: the `serialize` merge, the
 /// `deserialize` read (leniently, off the whole object — `null` when an optional field's own keys
-/// are all absent), and the `elementNames` read every later map field needs to know these keys are
-/// already spoken for.
+/// are all absent), and the `elementNames` read a later flattened map field needs.
 fn flatten_struct_field_plan(
     field: &KotlinField,
     prop: &str,
@@ -935,12 +897,8 @@ fn flatten_plan(fields: &[KotlinField], type_parameters: &[String]) -> FlattenPl
 }
 
 /// The generated `KSerializer` a struct with one or more `#[serde(flatten)]` fields earns, since
-/// `kotlinx.serialization` has no annotation for flatten: `serialize` merges each
-/// flattened value's own `JsonObject` entries into the enclosing object; `deserialize` decodes each
-/// flattened struct from the whole object, tolerant of the other fields' own keys, decodes a
-/// flattened map from whatever keys are left once every other field has claimed its own, and reads
-/// the struct's own fields off their own wire keys. A flattened `Option<T>` decodes `null` when
-/// none of `T`'s own keys — read off its serializer's descriptor — is present.
+/// `kotlinx.serialization` has no annotation for flatten: it merges each flattened value's own
+/// keys into the enclosing object, tolerant of the other fields' own keys on decode.
 fn flatten_merging_serializer(
     export_name: &str,
     generic_params: &str,
@@ -978,8 +936,7 @@ fn flatten_merging_serializer(
 
 /// The Kotlin tokens a named-field struct earns: a `data class`, plus a `typealias` under its own
 /// Rust ident when `name = "..."` moved its published name elsewhere. A struct carrying one or more
-/// `#[serde(flatten)]` fields also earns a generated merging [`KSerializer`](flatten_merging_serializer),
-/// since `kotlinx.serialization` cannot flatten by annotation.
+/// `#[serde(flatten)]` fields also earns a generated merging [`KSerializer`](flatten_merging_serializer).
 fn struct_kotlin_tokens(item_struct: &ItemStruct, name_override: Option<&str>) -> TokenStream {
     let type_parameters = type_parameters_in_scope(&item_struct.generics);
     if has_serde_transparent(&item_struct.attrs) && is_single_slot(&item_struct.fields) {
@@ -1024,8 +981,7 @@ fn struct_kotlin_tokens(item_struct: &ItemStruct, name_override: Option<&str>) -
 
 /// The Kotlin tokens for a value that carries no shape of its own on the wire beyond one wrapped
 /// value: a branded newtype or a non-branded single-slot ("bare value") tuple struct. Both publish
-/// as a `@JvmInline value class`, which `kotlinx.serialization` serializes identically to the
-/// wrapped value alone — the bare wire form serde itself writes for `#[serde(transparent)]`.
+/// as a `@JvmInline value class`, serialized identically to the wrapped value alone.
 fn value_class_tokens(
     ident: &Ident,
     generics: &syn::Generics,
@@ -1214,12 +1170,9 @@ fn variant_payload(
     }
 }
 
-/// One variant's own subclass declaration, implementing `export_name`, plus the plain reference to
-/// its own type (generics included) other builders name it by. `bare_value` selects a
+/// One variant's own subclass declaration, implementing `export_name`. `bare_value` selects a
 /// `@JvmInline value class` for a scalar `Value` payload — the bare wire form an untagged member
-/// needs, since its own default serializer is what the base's generated dispatcher calls directly
-/// — while a tagged form (whose own dispatcher unwraps the payload itself, or whose polymorphic
-/// dispatch merges the payload's own fields) wraps it in an ordinary `data class` property instead.
+/// needs — while a tagged form wraps it in an ordinary `data class` property instead.
 fn variant_subclass(
     export_name: &str,
     subclass_name: &str,
@@ -1260,9 +1213,7 @@ fn variant_subclass(
 
 /// The Kotlin tokens an internally-tagged enum (`tag = "..."`, no `content`) earns: a
 /// `@JsonClassDiscriminator`-annotated `sealed interface`, one subclass per variant, each always
-/// carrying `@SerialName` — the subclass name is compound (`{Base}{Variant}`) and never coincides
-/// with the wire tag, so the annotation is what makes it the discriminator value the plugin's own
-/// sealed-hierarchy dispatch reads.
+/// carrying `@SerialName` since the subclass name never coincides with the wire tag.
 fn internal_tagged_enum_kotlin_source(
     item_enum: &ItemEnum,
     export_name: &str,
@@ -1338,8 +1289,7 @@ fn dispatched_tagged_variant(
         )),
     };
     // Adjacent tagging reads its content out of a `Map` index, which is nullable in Kotlin;
-    // external tagging destructures the object's one entry, already non-null. Only a Unit
-    // payload's own arm never forces it, since a Unit variant carries no content key at all.
+    // external tagging destructures the object's one entry, already non-null.
     let data_ref = if ctx.content_key.is_some() {
         "data!!"
     } else {
@@ -1378,9 +1328,8 @@ fn dispatched_tagged_variant(
 }
 
 /// The Kotlin tokens an adjacently-tagged (`tag = "...", content = "..."`) or externally-tagged
-/// (serde's own default) enum earns: a plain `sealed interface`, one subclass per variant with no
-/// annotation the dispatcher needs, and a generated `KSerializer` that reads and writes the tag and
-/// content object by hand — the shape the codec spike proved needs one.
+/// (serde's own default) enum earns: a plain `sealed interface`, one subclass per variant, and a
+/// generated `KSerializer` that reads and writes the tag and content object by hand.
 fn dispatched_tagged_enum_kotlin_source(
     item_enum: &ItemEnum,
     export_name: &str,
@@ -1462,8 +1411,7 @@ fn dispatched_tagged_enum_kotlin_source(
 
 /// The Kotlin tokens a `#[serde(untagged)]` enum earns: a plain `sealed interface` and a generated
 /// `KSerializer` that tries each variant's own serializer in turn, returning the first that decodes
-/// — mirroring Dart's own try-each-variant fallback (Kotlin has no structural-shape combinator
-/// general enough for an arbitrary mix of member shapes, only a serializer-selecting one).
+/// — mirroring Dart's own try-each-variant fallback.
 fn untagged_enum_kotlin_source(
     item_enum: &ItemEnum,
     export_name: &str,

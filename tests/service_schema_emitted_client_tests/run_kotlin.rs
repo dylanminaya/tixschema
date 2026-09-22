@@ -1,12 +1,6 @@
-//! The emitted Kotlin run under a Kotlin toolchain: the codec rows the Kotlin spike proved,
-//! decoded from the JSON Rust wrote and re-encoded; the `http_rest` client's own URLs (the same
-//! three `run_dart.rs` asserts); the `ws_rpc` client's own scenarios against a fake socket; and
-//! the mini server, sharing its socket with a second service, against frames sent by hand.
-//!
-//! Every group compiles one `main.kt` with `kotlinc` and runs the result with `java` — no package
-//! manifest, no Gradle — standing down exactly as [`super::run_dart`] does where no Kotlin
-//! toolchain is reachable. A single fake socket class carries every `ws_rpc` scenario: unpaired
-//! and fed by hand for the client group, paired for the mini-server group's own live connection.
+//! The emitted Kotlin run under a Kotlin toolchain: the codec rows, the `http_rest` client's own
+//! URLs, the `ws_rpc` client's scenarios against a fake socket, and the mini server sharing its
+//! socket with a second service — standing down as [`super::run_dart`] does with none reachable.
 
 #![cfg(feature = "kotlin")]
 
@@ -76,8 +70,7 @@ fun main() = runBlocking {
 
 /// The one fake socket every `ws_rpc` group drives: `deliver` stands in for an inbound frame
 /// arriving (group 3, unpaired), `peer` stands in for a live connection (group 4, paired). Each
-/// group compiles its own separate `main.kt` — a fresh `java` process per group, never shared —
-/// since a Kotlin transport's own internal scope outlives one process only by design.
+/// group compiles its own separate `main.kt` — a fresh `java` process per group, never shared.
 const FAKE_SOCKET: &str = r#"
 class FakeSocket(private val scope: CoroutineScope) : ConversationClientServiceWsSocket {
     var peer: FakeSocket? = null
@@ -116,8 +109,7 @@ fun requestId(sent: String?): String? {
 
 /// Group 3's own driver: five scenarios against a fake socket fed by hand — a ping answered with
 /// one pong, a missed pong closing the socket, a reply that fails validation, a request settled
-/// when the transport closes, and a frame for another service dropped while the genuine reply
-/// still resolves.
+/// when the transport closes, and a frame for another service dropped while the genuine reply resolves.
 const WS_CLIENT_DRIVER: &str = r#"
 fun main() = runBlocking {
     val pingSocket = FakeSocket(this)
@@ -182,8 +174,7 @@ fun main() = runBlocking {
 
 /// Group 4's own driver: the mini server against a connected fake-socket pair — every frame that
 /// carries an id answered, the one-way included; a declared error; a bad-payload notify reaching
-/// `onFault` only; sharing the socket with `PulseClientService`, each answering only its own
-/// frames, one pong per ping; and `share()` throwing once the attachment has detached.
+/// `onFault` only; sharing the socket with `PulseClientService`; and `share()` throwing once detached.
 const MINI_SERVER_DRIVER: &str = r#"
 fun connectedPair(scope: CoroutineScope): Pair<FakeSocket, FakeSocket> {
     val a = FakeSocket(scope)

@@ -1,48 +1,6 @@
-//! The Kotlin `ws_rpc` client: a transport that owns the socket, a per-operation client that
-//! calls out over it, and a dispatcher attachment for a service the app implements — one module
-//! holding both halves, mirroring [`super::dart_ws_client`] over Kotlin's own coroutine and
-//! `kotlinx.serialization` idioms rather than Dart's `Future`/`Stream` pair.
-//!
-//! # The transport owns the socket
-//!
-//! `{Service}WsSocket` exposes exactly one `onMessage` and one `onClose` slot, and the transport's
-//! constructor is the only place either is set. A second service sharing the connection cannot
-//! set them a second time, so it reaches every frame the transport does not itself correlate to a
-//! pending `request` through `{Service}WsFrames` instead — a structural record of the raw text to
-//! answer over (`send`), the uncorrelated frames (`inbound`), and the transport's own
-//! `CoroutineScope`. Handing out that scope, rather than a fresh one per attachment, is what lets
-//! closing the transport tear every dispatcher reading `frames` down with it, shared ones
-//! included: cancelling a `CoroutineScope` cancels every coroutine launched on it.
-//!
-//! # A caller reads the outcome, exactly as the `http_rest` Kotlin client does
-//!
-//! A reply operation answers `{Service}{Operation}Result` — the same sealed type
-//! [`super::kotlin_http_client`] already publishes for it — and never throws for a declared error
-//! or a fault; a one-way operation still answers plainly and throws the fault-only
-//! `{Service}WsRefusal`, named apart from `kotlin_http_client()`'s own bare `{Service}Refusal` so
-//! the two coexist in one file.
-//!
-//! # A handler answers the sealed result; it does not throw the declared error
-//!
-//! `{Service}Handlers` answers a reply operation with the same `{Service}{Operation}Result` the
-//! client reads, narrowed on `Ok`/`Declared`/`Fault` in the dispatch arm rather than caught off a
-//! thrown type — Kotlin has no throwable a plain `@Serializable` declared error could be without
-//! this crate inventing a wrapper type nothing else needs. Anything a handler throws regardless is
-//! unexpected and reaches `onFault` as a `handler-panic` fault instead. Whenever the inbound frame
-//! carried an id — a caller waiting on a reply, whether the operation is one-way or not — the
-//! attachment answers it, so a pending caller is never left hanging.
-//!
-//! # A decode failure is a failed-validation fault, not an undeserializable-payload one
-//!
-//! `ws_rpc` has no status to distinguish an unreadable reply from a rejected one, mirroring
-//! `dart_ws_client`'s own reasoning: a reply that will not decode is answered as `failedValidation`
-//! under this crate's own vocabulary.
-//!
-//! # The wire's own fault shape
-//!
-//! A reply's `error` key carries the operation's declared error verbatim, or
-//! `{ "isServiceFault": true, "fault": <fault fields> }` in its place — the convention every other
-//! surface in this crate already writes for an outbound or a dispatcher-detected fault.
+//! The Kotlin `ws_rpc` client: a transport that owns the socket, a per-operation client, and a
+//! dispatcher attachment for a service the app implements. A reply's `error` key carries the
+//! operation's declared error verbatim, or `{ "isServiceFault": true, "fault": <fault fields> }`.
 
 use super::result::result_name;
 use crate::features::kotlin::kotlin_typename;

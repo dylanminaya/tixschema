@@ -1,28 +1,6 @@
-//! The Kotlin `http_rest` client: request/response data classes, a transport seam the hosting
-//! application implements, one sealed result per reply operation, and one `suspend` method per
-//! operation that builds a plain-terms request from the operation's own message and decodes the
-//! answer by status — mirroring [`super::dart_http_client`] statement for statement, since the URL,
-//! query and header rules it builds on were proven by execution on Dart.
-//!
-//! # A caller reads the outcome; one-way still throws
-//!
-//! A reply method answers `{Service}{Operation}Result` — a sealed interface of `Ok`/`Declared`/
-//! `Fault` nested inside it — and never throws for a declared error or a fault. A one-way operation
-//! still answers plainly (`Unit`) and throws the fault-only `{Service}Refusal`, having no reply arm
-//! to carry a fault through.
-//!
-//! # The fault is the same generated type every other surface answers faults through
-//!
-//! `{Service}FaultFields`/`{Service}FaultKind` already carry `#[model_schema()]`, so their Kotlin
-//! comes from the ordinary [`crate::features::kotlin`] dispatch — this module reuses them rather
-//! than inventing a fault shape of its own.
-//!
-//! # Naming
-//!
-//! Every private helper here is prefixed with the service's own lower-camel name, mirroring the
-//! Dart client's own `_{fn_prefix}Http...` convention — Kotlin has no per-file privacy narrower
-//! than a `private` modifier, but two services vendored into one bundle would still collide on an
-//! unprefixed top-level name.
+//! The Kotlin `http_rest` client: request/response data classes, a transport seam, one sealed
+//! result per reply operation, and one `suspend` method per operation, each helper prefixed with
+//! the service's own name since Kotlin has no per-file privacy to keep two vendored services apart.
 
 use super::result::result_name;
 use crate::features::kotlin::kotlin_typename;
@@ -39,8 +17,7 @@ use syn::Type;
 
 /// One reply operation's own success shape: the Kotlin type `Ok`'s `value` carries, and any
 /// auxiliary `data class` declaration that type needs published ahead of the sealed result —
-/// `body = "bytes"` and `body = "stream"` each answer more than the bare success type, and a
-/// declared `header_out` composes onto whichever of the two applies.
+/// `body = "bytes"` and `body = "stream"` each answer more than the bare success type.
 struct SuccessShape {
     aux_declaration: Option<String>,
     type_name: String,
@@ -894,9 +871,8 @@ fn reads_a_response_header(service: &ServiceDef) -> bool {
 }
 
 /// The RFC 3986 unreserved-character percent-encoder every path and query value is written
-/// through — Kotlin names no networking library, so this is the one thing the emitted code writes
-/// for itself rather than reaching for `java.net.URLEncoder` (which encodes a space as `+`, the
-/// wrong rule for a URI component).
+/// through — the emitted code writes it for itself rather than reaching for `java.net.URLEncoder`
+/// (which encodes a space as `+`, the wrong rule for a URI component).
 fn percent_encode_fn(fn_prefix: &str) -> String {
     format!(
         "/// Percent-encodes `value` for a URL path segment or query value: every byte but the\n\
@@ -1026,13 +1002,8 @@ fn is_sibling_type(ty: &Type) -> bool {
 }
 
 /// The Kotlin expression that renders `ty`'s value at `expr` as URL- or header-safe text: an
-/// `Option<T>` reads as the empty string when absent, a `List<T>` joins its elements' own text
-/// with a comma, and a sibling type is read through the JSON codec first — Kotlin string
-/// interpolation would otherwise call its `toString()`, which is not the wire spelling. A
-/// `String`, a `Boolean` and a number all interpolate correctly as themselves.
-///
-/// `promoted` says whether Kotlin has already smart-cast `expr` past an `== null` test — a
-/// parameter or a local, never a read through a published property's own getter.
+/// `Option<T>` reads as the empty string when absent, a `List<T>` joins with a comma, and a
+/// sibling type is read through the JSON codec first. `promoted` marks `expr` already null-checked.
 fn kotlin_wire_text(ty: &Type, expr: &str, promoted: bool) -> String {
     if let Some(inner) = option_inner(ty) {
         let narrowed = if promoted {
@@ -1048,10 +1019,8 @@ fn kotlin_wire_text(ty: &Type, expr: &str, promoted: bool) -> String {
         return format!("({expr}).joinToString(\",\") {{ {element} }}");
     }
     if is_sibling_type(ty) {
-        // A scalar sibling type (a branded newtype, a plain enum) serializes to a bare JSON
-        // primitive; reading `.jsonPrimitive.content` back off it is what gives the unquoted
-        // wire text a path or query value needs — `encodeToString` would keep the JSON quoting
-        // a string value carries.
+        // A scalar sibling type serializes to a bare JSON primitive; reading `.jsonPrimitive.content`
+        // back off it gives the unquoted wire text a path or query value needs.
         let element_ty = kotlin_type_of(ty);
         return format!(
             "Json.encodeToJsonElement(serializer<{element_ty}>(), {expr}).jsonPrimitive.content"

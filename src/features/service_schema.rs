@@ -183,10 +183,8 @@ pub fn emit(service: &ServiceDef, non_exhaustive: bool) -> TokenStream {
     }
 }
 
-/// The service's generated TypeScript: `ts_definition()` — every type the macro declared for it,
-/// the fault a caller can receive, and one result type per operation that answers — plus the
-/// client and dispatcher artifacts [`seam`] publishes where `zod` is also on. Published only where
-/// the `typescript` feature is on.
+/// The service's generated TypeScript: `ts_definition()` plus the client and dispatcher artifacts
+/// [`seam`] publishes where `zod` is also on. Published only where the `typescript` feature is on.
 #[cfg(feature = "typescript")]
 fn ts_seam(service: &ServiceDef) -> TokenStream {
     let published = published(service);
@@ -246,13 +244,9 @@ fn dart_seam(_service: &ServiceDef) -> TokenStream {
     TokenStream::new()
 }
 
-/// The service's generated Swift clients: the `http_rest` transport seam, one `async` method per
-/// operation over Swift's own `Result<Success, Failure>`, and the fault helpers every method
-/// reaches for; and the `ws_rpc` transport seam, the heartbeat options, and one actor carrying the
-/// correlation and the liveness probe with one method per operation, naming
-/// `{Named}{Operation}Failure` and `{Named}Refusal` rather than redeclaring them — both published
-/// only where the `swift` feature publishes the Swift types and codec this client's messages,
-/// successes and errors are written in.
+/// The service's generated Swift clients: the `http_rest` transport seam with one `async` method
+/// per operation, and the `ws_rpc` transport with one correlating actor — both published only
+/// where the `swift` feature publishes the Swift types and codec.
 #[cfg(feature = "swift")]
 fn swift_seam(service: &ServiceDef) -> TokenStream {
     let http_client = swift_http_client::emit(service).join("\n\n");
@@ -273,12 +267,8 @@ fn swift_seam(service: &ServiceDef) -> TokenStream {
     }
 }
 
-/// The service's generated Kotlin `http_rest` client: request/response data classes, a transport
-/// seam the hosting application implements, one sealed result per reply operation, and a
-/// `suspend`-method-per-operation client; and the Kotlin `ws_rpc` sibling: a transport that owns
-/// the socket, a client answering the same sealed result, and a dispatcher attachment for a
-/// service the app implements — published only where the `kotlin` feature publishes the Kotlin
-/// types and codec this client's messages, successes and errors are written in.
+/// The service's generated Kotlin `http_rest` client and its `ws_rpc` sibling, both over the
+/// `kotlin` feature's own types and codec, published only where that feature is on.
 #[cfg(feature = "kotlin")]
 fn kotlin_seam(service: &ServiceDef) -> TokenStream {
     let client = kotlin_http_client::emit(service).join("\n\n");
