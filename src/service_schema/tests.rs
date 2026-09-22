@@ -3340,9 +3340,8 @@ fn a_streamed_operations_expansion_names_no_runtime_crate() {
 
 /// The `non_exhaustive` argument seals exactly the four generated types the design names — the
 /// registry, the fault kind, `CallError`, and a generated message struct — and nothing else in the
-/// expansion. The registry (`UsageServiceSchema`) is `features::service_schema::emit`'s own type
-/// and that module only builds where `typescript` does, so a build without it seals the other three
-/// and stops there.
+/// expansion. The registry (`UsageServiceSchema`) is `features::service_schema::emit`'s own type,
+/// which every `serde` build compiles regardless of which language feature, if any, is also on.
 #[test]
 fn the_non_exhaustive_flag_seals_exactly_the_four_generated_types() {
     let emitted = expansion_over_amqp_rpc_non_exhaustive(CREDIT_SERVICE).to_string();
@@ -3350,37 +3349,18 @@ fn the_non_exhaustive_flag_seals_exactly_the_four_generated_types() {
         "# [non_exhaustive] pub enum UsageServiceFaultKind",
         "# [non_exhaustive] pub enum CallError",
         "# [non_exhaustive] pub struct ExpireCreditRequest",
+        "# [non_exhaustive] pub struct UsageServiceSchema",
     ] {
         assert!(
             emitted.contains(sealed),
             "missing `{sealed}`. Got: {emitted}"
         );
     }
-    #[cfg(feature = "typescript")]
-    {
-        assert!(
-            emitted.contains("# [non_exhaustive] pub struct UsageServiceSchema"),
-            "missing `# [non_exhaustive] pub struct UsageServiceSchema`. Got: {emitted}"
-        );
-        assert_eq!(
-            emitted.matches("# [non_exhaustive]").count(),
-            4,
-            "exactly the four generated types should be sealed, and nothing else. Got: {emitted}"
-        );
-    }
-    #[cfg(not(feature = "typescript"))]
-    {
-        assert!(
-            !emitted.contains("UsageServiceSchema"),
-            "a build with no TypeScript publishes no registry to seal. Got: {emitted}"
-        );
-        assert_eq!(
-            emitted.matches("# [non_exhaustive]").count(),
-            3,
-            "exactly the three generated types this build carries should be sealed, and nothing \
-             else. Got: {emitted}"
-        );
-    }
+    assert_eq!(
+        emitted.matches("# [non_exhaustive]").count(),
+        4,
+        "exactly the four generated types should be sealed, and nothing else. Got: {emitted}"
+    );
 }
 
 /// Without the argument, the expansion carries no `#[non_exhaustive]` anywhere — the default this
@@ -3408,17 +3388,8 @@ fn the_flag_alone_is_accepted_and_asks_for_no_transport() {
             "`{absent}` belongs to a transport, and this service asked for none. Got: {emitted}"
         );
     }
-    // The registry (`UsageServiceSchema`) only exists in a build with `typescript`; `CallError`
-    // is generated in every build with `serde`, so it stands in for the flag reaching the
-    // expansion where the registry does not exist to check.
-    #[cfg(feature = "typescript")]
     assert!(
         emitted.contains("# [non_exhaustive] pub struct UsageServiceSchema"),
-        "got: {emitted}"
-    );
-    #[cfg(not(feature = "typescript"))]
-    assert!(
-        emitted.contains("# [non_exhaustive] pub enum CallError"),
         "got: {emitted}"
     );
 }

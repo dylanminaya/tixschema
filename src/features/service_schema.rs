@@ -117,7 +117,7 @@
 //! on the fields, and this is what TypeScript can be given in its place: a type a caller reads
 //! exactly as before and an implementation cannot write.
 
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod client;
 #[cfg(feature = "dart")]
 mod dart_http_client;
@@ -125,19 +125,20 @@ mod dart_http_client;
 mod dart_result;
 #[cfg(feature = "dart")]
 mod dart_ws_client;
+#[cfg(feature = "typescript")]
 mod fault;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod http_client;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod http_service;
 #[cfg(feature = "kotlin")]
 mod kotlin_http_client;
 #[cfg(feature = "kotlin")]
 mod kotlin_ws_client;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod message;
 mod result;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod service;
 #[cfg(feature = "swift")]
 mod swift_http_client;
@@ -145,15 +146,17 @@ mod swift_http_client;
 mod swift_type;
 #[cfg(feature = "swift")]
 mod swift_ws_client;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod ws_client;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod ws_server;
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 mod ws_service;
 
 use crate::service_schema::parse::ServiceDef;
-use crate::service_schema::support::{exhaustiveness, fault_fields_typescript_name, module_ident};
+use crate::service_schema::support::exhaustiveness;
+#[cfg(any(feature = "typescript", feature = "dart"))]
+use crate::service_schema::support::{fault_fields_typescript_name, module_ident};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -161,8 +164,7 @@ pub fn emit(service: &ServiceDef, non_exhaustive: bool) -> TokenStream {
     let named = service.ident.to_string();
     let registry = format_ident!("{named}Schema", span = service.ident.span());
     let rustdoc = registry_rustdoc(&named);
-    let published = published(service);
-    let seam = seam(service);
+    let ts_seam = ts_seam(service);
     let dart_seam = dart_seam(service);
     let swift_seam = swift_seam(service);
     let kotlin_seam = kotlin_seam(service);
@@ -173,19 +175,37 @@ pub fn emit(service: &ServiceDef, non_exhaustive: bool) -> TokenStream {
         pub struct #registry;
 
         impl #registry {
-            #[doc = " Every TypeScript type this service publishes: the messages the macro declared"]
-            #[doc = " for it, the fault a caller can receive, and one result type per operation that"]
-            #[doc = " answers."]
-            pub fn ts_definition() -> String {
-                [#(#published),*].join("\n\n")
-            }
-
-            #seam
+            #ts_seam
             #dart_seam
             #swift_seam
             #kotlin_seam
         }
     }
+}
+
+/// The service's generated TypeScript: `ts_definition()` — every type the macro declared for it,
+/// the fault a caller can receive, and one result type per operation that answers — plus the
+/// client and dispatcher artifacts [`seam`] publishes where `zod` is also on. Published only where
+/// the `typescript` feature is on.
+#[cfg(feature = "typescript")]
+fn ts_seam(service: &ServiceDef) -> TokenStream {
+    let published = published(service);
+    let seam = seam(service);
+    quote! {
+        #[doc = " Every TypeScript type this service publishes: the messages the macro declared"]
+        #[doc = " for it, the fault a caller can receive, and one result type per operation that"]
+        #[doc = " answers."]
+        pub fn ts_definition() -> String {
+            [#(#published),*].join("\n\n")
+        }
+
+        #seam
+    }
+}
+
+#[cfg(not(feature = "typescript"))]
+fn ts_seam(_service: &ServiceDef) -> TokenStream {
+    TokenStream::new()
 }
 
 /// The service's generated Dart clients: the `http_rest` transport seam, the exceptions a call
@@ -295,7 +315,7 @@ fn kotlin_seam(_service: &ServiceDef) -> TokenStream {
 /// implementation. Both parse against the Zod schema `#[model_schema()]` publishes for the message,
 /// so a build without the Zod surface has nothing for either of them to check against and publishes
 /// neither.
-#[cfg(feature = "zod")]
+#[cfg(all(feature = "typescript", feature = "zod"))]
 fn seam(service: &ServiceDef) -> TokenStream {
     let client = client::emit(service).join("\n\n");
     let http_client = http_client::emit(service).join("\n\n");
@@ -355,7 +375,7 @@ fn seam(service: &ServiceDef) -> TokenStream {
     }
 }
 
-#[cfg(not(feature = "zod"))]
+#[cfg(all(feature = "typescript", not(feature = "zod")))]
 fn seam(_service: &ServiceDef) -> TokenStream {
     TokenStream::new()
 }
@@ -374,6 +394,7 @@ fn seam(_service: &ServiceDef) -> TokenStream {
 /// A message's Zod schema is one of those artifacts and is registered here for the same reason its
 /// type is — nobody else has a line to write it on. It is asked for only in a build that writes
 /// Zod at all.
+#[cfg(feature = "typescript")]
 fn published(service: &ServiceDef) -> Vec<TokenStream> {
     let module = module_ident(service);
     let mut collected = Vec::new();
@@ -431,30 +452,37 @@ fn dart_published(service: &ServiceDef) -> Vec<TokenStream> {
 }
 
 fn registry_rustdoc(service: &str) -> Vec<String> {
-    let mut written = vec![
-        format!(" What `{service}` publishes to TypeScript, in one place per artifact."),
+    let mut written = vec![format!(
+        " What `{service}` publishes, in one place per artifact."
+    )];
+    written.extend(ts_registry_rustdoc(service));
+    written
+}
+
+/// What the registry's own rustdoc says about `ts_definition()`, the client and the dispatcher.
+/// Folded on both `typescript` and `zod` rather than composed from two calls, so a build missing
+/// either has nothing left over to warn about being unused.
+#[cfg(all(feature = "typescript", feature = "zod"))]
+fn ts_registry_rustdoc(service: &str) -> Vec<String> {
+    vec![
         String::new(),
         format!(
             " A bundle names `{service}Schema::ts_definition()` once and receives the service's own \
              types together with every message the macro declared for it, so no generated message \
              needs a registration line of its own."
         ),
-    ];
-    written.extend(seam_rustdoc(service));
-    written
+    ]
 }
 
-/// What the registry's own rustdoc says about the client and the dispatcher. In a build that
-/// publishes them, nothing — the two methods carry their own. In a build that does not, the reason
-/// they are missing, written where a reader looking for them arrives.
-#[cfg(feature = "zod")]
-const fn seam_rustdoc(_service: &str) -> Vec<String> {
-    Vec::new()
-}
-
-#[cfg(not(feature = "zod"))]
-fn seam_rustdoc(service: &str) -> Vec<String> {
+#[cfg(all(feature = "typescript", not(feature = "zod")))]
+fn ts_registry_rustdoc(service: &str) -> Vec<String> {
     vec![
+        String::new(),
+        format!(
+            " A bundle names `{service}Schema::ts_definition()` once and receives the service's own \
+             types together with every message the macro declared for it, so no generated message \
+             needs a registration line of its own."
+        ),
         String::new(),
         format!(
             " This build publishes no `{service}Schema::ts_client()`, no \
@@ -466,6 +494,19 @@ fn seam_rustdoc(service: &str) -> Vec<String> {
              feature writes one — so rather than a client, a transport and a dispatcher that \
              check nothing, this build publishes the service's types and leaves the seven seam \
              artifacts out. Add `features = [\"zod\"]` to the tixschema dependency to get them."
+        ),
+    ]
+}
+
+#[cfg(not(feature = "typescript"))]
+fn ts_registry_rustdoc(service: &str) -> Vec<String> {
+    vec![
+        String::new(),
+        format!(
+            " This build publishes no TypeScript for `{service}`: no `ts_definition()` and none of \
+             the client or dispatcher artifacts. Add `features = [\"typescript\"]` to the \
+             tixschema dependency to get them, or enable a language feature of its own (`dart`, \
+             `swift`, `kotlin`) if a mobile or server target is what this build wants instead."
         ),
     ]
 }

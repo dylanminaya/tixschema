@@ -32,9 +32,11 @@ pub mod kotlin;
 /// Module for parsing model_schema_prop attributes
 pub mod model_schema_prop;
 
-// Also gated on `serde`, because `#[service_schema]` is: the emitters this module names live in
-// `crate::service_schema`, which a build without that feature does not have.
-#[cfg(all(feature = "serde", feature = "typescript"))]
+// Gated on `serde`, because `#[service_schema]` is: the emitters this module names live in
+// `crate::service_schema`, which a build without that feature does not have. Not also gated on
+// `typescript`: the module holds every language's accessors, and `typescript`, `dart`, `swift` and
+// `kotlin` each gate only their own.
+#[cfg(feature = "serde")]
 pub mod service_schema;
 
 /// Feature detection utilities.
