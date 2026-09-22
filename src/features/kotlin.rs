@@ -449,12 +449,177 @@ pub fn kotlin_typename(field: &FieldDef) -> String {
     }
 }
 
-/// A reference to `field`'s own `KSerializer`, built from the same type text [`kotlin_typename`]
-/// renders — `kotlinx.serialization`'s reified top-level `serializer<T>()` resolves any nameable
-/// type this way, including a `List<…>`/`Map<…, …>` composition and a nullable type, so this
-/// module needs no per-shape serializer dispatch of its own.
-fn kotlin_serializer_expr(field: &FieldDef) -> String {
-    format!("serializer<{}>()", kotlin_typename(field))
+/// Whether `field` reaches one of `type_parameters` at any depth. Decides whether
+/// [`kotlin_serializer_expr`] must compose `field`'s `KSerializer` from the enclosing item's own
+/// constructor serializers instead of the reified `serializer<T>()`, which needs a concrete type.
+fn field_reaches_type_parameter(field: &FieldDef, type_parameters: &[String]) -> bool {
+    match &field.field_type {
+        FieldDefType::TypeParam(name) => type_parameters.iter().any(|parameter| parameter == name),
+        FieldDefType::SiblingType(_, generics) => generics
+            .iter()
+            .any(|generic| field_reaches_type_parameter(generic, type_parameters)),
+        FieldDefType::Map(key, value) => {
+            field_reaches_type_parameter(key, type_parameters)
+                || field_reaches_type_parameter(value, type_parameters)
+        }
+        FieldDefType::Tuple(_)
+        | FieldDefType::Unknown
+        | FieldDefType::StringLiteral(_)
+        | FieldDefType::BooleanLiteral(_)
+        | FieldDefType::NumberLiteral(_)
+        | FieldDefType::Boolean
+        | FieldDefType::Char
+        | FieldDefType::String
+        | FieldDefType::U8
+        | FieldDefType::U16
+        | FieldDefType::U32
+        | FieldDefType::U64
+        | FieldDefType::I8
+        | FieldDefType::I16
+        | FieldDefType::I32
+        | FieldDefType::I64
+        | FieldDefType::Isize
+        | FieldDefType::Usize
+        | FieldDefType::F32
+        | FieldDefType::F64 => false,
+        #[cfg(feature = "object_id")]
+        FieldDefType::ObjectId => false,
+        #[cfg(feature = "chrono")]
+        FieldDefType::NaiveDate
+        | FieldDefType::NaiveTime
+        | FieldDefType::NaiveDateTime
+        | FieldDefType::DateTime => false,
+    }
+}
+
+/// `{lowerCamel(parameter)}Serializer` — the constructor property [`serializer_declaration`]
+/// binds one type parameter's own `KSerializer` argument to, and the identifier every reference to
+/// that parameter's serializer reads back.
+fn kotlin_serializer_param_name(parameter: &str) -> String {
+    format!(
+        "{}Serializer",
+        RenameRule::CamelCase.apply_to_variant(parameter)
+    )
+}
+
+/// A reference to `field`'s own `KSerializer`. A field reaching none of `type_parameters`
+/// resolves through the reified `serializer<T>()` as before; one that does reach a parameter
+/// composes `ListSerializer`/`MapSerializer`/`.nullable` instead, since a parameter is never reifiable.
+fn kotlin_serializer_expr(field: &FieldDef, type_parameters: &[String]) -> String {
+    if !field_reaches_type_parameter(field, type_parameters) {
+        return format!("serializer<{}>()", kotlin_typename(field));
+    }
+    let scalar = match &field.field_type {
+        FieldDefType::TypeParam(name) => kotlin_serializer_param_name(name),
+        FieldDefType::SiblingType(name, generics) => {
+            if let [element] = generics.as_slice()
+                && is_sequence_wrapper(name)
+            {
+                return kotlin_serializer_expr(
+                    &field.collection_element_field(element),
+                    type_parameters,
+                );
+            }
+            let class_name = lookup_kotlin_name(name).unwrap_or_else(|| name.clone());
+            let arguments = generics
+                .iter()
+                .map(|generic| kotlin_serializer_expr(generic, type_parameters))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{class_name}.serializer({arguments})")
+        }
+        FieldDefType::Map(key, value) => format!(
+            "MapSerializer({}, {})",
+            kotlin_serializer_expr(key, type_parameters),
+            kotlin_serializer_expr(value, type_parameters)
+        ),
+        // None of these ever reaches a type parameter (see `field_reaches_type_parameter`), so
+        // this arm is unreached in practice; it stays total rather than a wildcard for the same
+        // reason `kotlin_refused_width` stays total, and renders exactly the fallback above.
+        FieldDefType::Tuple(_)
+        | FieldDefType::Unknown
+        | FieldDefType::StringLiteral(_)
+        | FieldDefType::BooleanLiteral(_)
+        | FieldDefType::NumberLiteral(_)
+        | FieldDefType::Boolean
+        | FieldDefType::Char
+        | FieldDefType::String
+        | FieldDefType::U8
+        | FieldDefType::U16
+        | FieldDefType::U32
+        | FieldDefType::U64
+        | FieldDefType::I8
+        | FieldDefType::I16
+        | FieldDefType::I32
+        | FieldDefType::I64
+        | FieldDefType::Isize
+        | FieldDefType::Usize
+        | FieldDefType::F32
+        | FieldDefType::F64 => format!("serializer<{}>()", kotlin_typename(field)),
+        #[cfg(feature = "object_id")]
+        FieldDefType::ObjectId => format!("serializer<{}>()", kotlin_typename(field)),
+        #[cfg(feature = "chrono")]
+        FieldDefType::NaiveDate
+        | FieldDefType::NaiveTime
+        | FieldDefType::NaiveDateTime
+        | FieldDefType::DateTime => format!("serializer<{}>()", kotlin_typename(field)),
+    };
+    let wrapped = (0..field.array_depth).fold(scalar, |inner, level| {
+        let item = if field.is_nullable_at(level) {
+            format!("{inner}.nullable")
+        } else {
+            inner
+        };
+        format!("ListSerializer({item})")
+    });
+    if field.is_optional() {
+        format!("{wrapped}.nullable")
+    } else {
+        wrapped
+    }
+}
+
+/// The `KSerializer` for a variant's own subclass, which always carries the enclosing item's full
+/// type parameter list (see [`variant_subclass`]): the reified `serializer<{subclass}>()` for a
+/// non-generic item; `{subclass}.serializer(...)`, the plugin's own companion method, for a generic one.
+fn kotlin_subclass_serializer_expr(subclass_name: &str, type_parameters: &[String]) -> String {
+    if type_parameters.is_empty() {
+        format!("serializer<{subclass_name}>()")
+    } else {
+        let arguments = type_parameters
+            .iter()
+            .map(|parameter| kotlin_serializer_param_name(parameter))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{subclass_name}.serializer({arguments})")
+    }
+}
+
+/// The Kotlin head of an item's `KSerializer`: `object {Name}Serializer` for a non-generic item,
+/// unchanged; `class {Name}Serializer<T : Any>(private val tSerializer: KSerializer<T>)` for a
+/// generic one — bound to `Any` since `KSerializer<T>.nullable` requires it, for an `Option<T>` field.
+fn serializer_declaration(export_name: &str, type_parameters: &[String]) -> String {
+    let serializer_name = format!("{export_name}Serializer");
+    if type_parameters.is_empty() {
+        format!("object {serializer_name}")
+    } else {
+        let generic_list = type_parameters
+            .iter()
+            .map(|parameter| format!("{parameter}: Any"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let ctor_params = type_parameters
+            .iter()
+            .map(|parameter| {
+                format!(
+                    "private val {}: KSerializer<{parameter}>",
+                    kotlin_serializer_param_name(parameter)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("class {serializer_name}<{generic_list}>({ctor_params})")
+    }
 }
 
 /// The Kotlin type name for a Tuple-shaped field: queues a wrapper `data class` plus the
@@ -483,7 +648,7 @@ fn tuple_wrapper_typename(elements: &[FieldDef]) -> String {
         .map(|(slot, element)| {
             format!(
                 "add(output.json.encodeToJsonElement({}, value.slot{slot}))",
-                kotlin_serializer_expr(element)
+                kotlin_serializer_expr(element, &[])
             )
         })
         .collect::<Vec<_>>()
@@ -494,7 +659,7 @@ fn tuple_wrapper_typename(elements: &[FieldDef]) -> String {
         .map(|(slot, element)| {
             format!(
                 "input.json.decodeFromJsonElement({}, array[{slot}])",
-                kotlin_serializer_expr(element)
+                kotlin_serializer_expr(element, &[])
             )
         })
         .collect::<Vec<_>>()
@@ -636,8 +801,12 @@ fn flatten_base_field(field_def: &FieldDef) -> FieldDef {
 
 /// One non-flattened field's own `serialize`/`deserialize` statements and constructor argument —
 /// the branch [`flatten_plan`] takes for every field that is not itself `#[serde(flatten)]`.
-fn own_field_plan(field: &KotlinField, prop: &str) -> (String, String, String) {
-    let field_serializer = kotlin_serializer_expr(&field.field_def);
+fn own_field_plan(
+    field: &KotlinField,
+    prop: &str,
+    type_parameters: &[String],
+) -> (String, String, String) {
+    let field_serializer = kotlin_serializer_expr(&field.field_def, type_parameters);
     let serialize = format!(
         "put(\"{}\", output.json.encodeToJsonElement({field_serializer}, value.{prop}))",
         field.wire_name
@@ -664,9 +833,13 @@ fn own_field_plan(field: &KotlinField, prop: &str) -> (String, String, String) {
 /// `deserialize` read (leniently, off the whole object — `null` when an optional field's own keys
 /// are all absent), and the `elementNames` read every later map field needs to know these keys are
 /// already spoken for.
-fn flatten_struct_field_plan(field: &KotlinField, prop: &str) -> (String, String, String) {
+fn flatten_struct_field_plan(
+    field: &KotlinField,
+    prop: &str,
+    type_parameters: &[String],
+) -> (String, String, String) {
     let base = flatten_base_field(&field.field_def);
-    let inner_serializer = kotlin_serializer_expr(&base);
+    let inner_serializer = kotlin_serializer_expr(&base, type_parameters);
     let serialize = if field.field_def.is_optional() {
         format!(
             "value.{prop}?.let {{ flattened -> output.json.encodeToJsonElement({inner_serializer}, flattened).jsonObject.forEach {{ (k, v) -> put(k, v) }} }}"
@@ -706,7 +879,7 @@ fn flatten_map_field_plan(
     (serialize, decode)
 }
 
-fn flatten_plan(fields: &[KotlinField]) -> FlattenPlan {
+fn flatten_plan(fields: &[KotlinField], type_parameters: &[String]) -> FlattenPlan {
     let mut plan = FlattenPlan {
         ctor_args: Vec::new(),
         deserialize_stmts: Vec::new(),
@@ -720,16 +893,17 @@ fn flatten_plan(fields: &[KotlinField]) -> FlattenPlan {
     for field in fields {
         let prop = kotlin_property_name(&field.rust_name);
         if !field.flatten {
-            let (serialize, decode, wire_key) = own_field_plan(field, &prop);
+            let (serialize, decode, wire_key) = own_field_plan(field, &prop, type_parameters);
             plan.serialize_stmts.push(serialize);
             plan.deserialize_stmts.push(decode);
             own_wire_keys.push(wire_key);
         } else if let FieldDefType::Map(_, map_value) = &field.field_def.field_type {
-            map_field = Some((field, kotlin_serializer_expr(map_value)));
+            map_field = Some((field, kotlin_serializer_expr(map_value, type_parameters)));
             continue;
         } else {
             plan.needs_lenient = true;
-            let (serialize, decode, keys_ident) = flatten_struct_field_plan(field, &prop);
+            let (serialize, decode, keys_ident) =
+                flatten_struct_field_plan(field, &prop, type_parameters);
             plan.serialize_stmts.push(serialize);
             plan.deserialize_stmts.push(decode);
             struct_key_idents.push(keys_ident);
@@ -770,11 +944,12 @@ fn flatten_plan(fields: &[KotlinField]) -> FlattenPlan {
 fn flatten_merging_serializer(
     export_name: &str,
     generic_params: &str,
+    type_parameters: &[String],
     fields: &[KotlinField],
 ) -> String {
-    let serializer_name = format!("{export_name}Serializer");
     let self_type = format!("{export_name}{generic_params}");
-    let plan = flatten_plan(fields);
+    let serializer_head = serializer_declaration(export_name, type_parameters);
+    let plan = flatten_plan(fields, type_parameters);
 
     let lenient_field = if plan.needs_lenient {
         "private val lenient = Json { ignoreUnknownKeys = true }; "
@@ -795,7 +970,7 @@ fn flatten_merging_serializer(
         plan.ctor_args.join(", "),
     );
     format!(
-        "object {serializer_name} : KSerializer<{self_type}> {{ \
+        "{serializer_head} : KSerializer<{self_type}> {{ \
          override val descriptor: SerialDescriptor = buildClassSerialDescriptor(\"{export_name}\"); \
          {lenient_field}{serialize_body}; {deserialize_body} }}"
     )
@@ -837,7 +1012,8 @@ fn struct_kotlin_tokens(item_struct: &ItemStruct, name_override: Option<&str>) -
         )
     };
     let kotlin_source = if fields.iter().any(|field| field.flatten) {
-        let serializer = flatten_merging_serializer(&export_name, &generic_params, &fields);
+        let serializer =
+            flatten_merging_serializer(&export_name, &generic_params, &type_parameters, &fields);
         format!("@Serializable(with = {export_name}Serializer::class) {body} {serializer}{alias}")
     } else {
         format!("@Serializable {body}{alias}")
@@ -898,6 +1074,7 @@ fn tuple_struct_kotlin_tokens(
 
     let generic_params = kotlin_generic_params(&item_struct.generics);
     let serializer_name = format!("{export_name}Serializer");
+    let serializer_head = serializer_declaration(&export_name, &type_parameters);
     let params = slots
         .iter()
         .enumerate()
@@ -910,7 +1087,7 @@ fn tuple_struct_kotlin_tokens(
         .map(|(slot, element)| {
             format!(
                 "add(output.json.encodeToJsonElement({}, value.slot{slot}))",
-                kotlin_serializer_expr(element)
+                kotlin_serializer_expr(element, &type_parameters)
             )
         })
         .collect::<Vec<_>>()
@@ -921,7 +1098,7 @@ fn tuple_struct_kotlin_tokens(
         .map(|(slot, element)| {
             format!(
                 "input.json.decodeFromJsonElement({}, array[{slot}])",
-                kotlin_serializer_expr(element)
+                kotlin_serializer_expr(element, &type_parameters)
             )
         })
         .collect::<Vec<_>>()
@@ -930,7 +1107,7 @@ fn tuple_struct_kotlin_tokens(
     let kotlin_source = format!(
         "@Serializable(with = {serializer_name}::class) \
          data class {export_name}{generic_params}({params}) \
-         object {serializer_name} : KSerializer<{export_name}{generic_params}> {{ \
+         {serializer_head} : KSerializer<{export_name}{generic_params}> {{ \
          override val descriptor: SerialDescriptor = buildClassSerialDescriptor(\"{export_name}\"); \
          override fun serialize(encoder: Encoder, value: {export_name}{generic_params}) {{ \
          val output = encoder as JsonEncoder; \
@@ -1152,11 +1329,12 @@ fn dispatched_tagged_variant(
     let content_expr = match &payload {
         VariantPayload::Unit => None,
         VariantPayload::Named(_) => Some(format!(
-            "output.json.encodeToJsonElement(serializer<{subclass_name}>(), value)"
+            "output.json.encodeToJsonElement({}, value)",
+            kotlin_subclass_serializer_expr(&subclass_name, ctx.type_parameters)
         )),
         VariantPayload::Value(field_def) => Some(format!(
             "output.json.encodeToJsonElement({}, value.value)",
-            kotlin_serializer_expr(field_def)
+            kotlin_serializer_expr(field_def, ctx.type_parameters)
         )),
     };
     // Adjacent tagging reads its content out of a `Map` index, which is nullable in Kotlin;
@@ -1169,12 +1347,13 @@ fn dispatched_tagged_variant(
     };
     let decode_expr = match &payload {
         VariantPayload::Unit => subclass_name.clone(),
-        VariantPayload::Named(_) => {
-            format!("input.json.decodeFromJsonElement(serializer<{subclass_name}>(), {data_ref})")
-        }
+        VariantPayload::Named(_) => format!(
+            "input.json.decodeFromJsonElement({}, {data_ref})",
+            kotlin_subclass_serializer_expr(&subclass_name, ctx.type_parameters)
+        ),
         VariantPayload::Value(field_def) => format!(
             "{subclass_name}(input.json.decodeFromJsonElement({}, {data_ref}))",
-            kotlin_serializer_expr(field_def)
+            kotlin_serializer_expr(field_def, ctx.type_parameters)
         ),
     };
 
@@ -1243,8 +1422,9 @@ fn dispatched_tagged_enum_kotlin_source(
     let deserialize_body = content_key.map_or_else(
         || {
             format!(
-                "val obj = input.decodeJsonElement().jsonObject; \
-                 val (tag, data) = obj.entries.single(); \
+                "val element = input.decodeJsonElement(); \
+                 val (tag, data) = if (element is JsonPrimitive) element.content to JsonNull \
+                 else element.jsonObject.entries.single().let {{ it.key to it.value }}; \
                  return when (tag) {{ {} else -> error(\"unknown tag \" + tag) }}",
                 deserialize_arms.join("; "),
             )
@@ -1262,11 +1442,12 @@ fn dispatched_tagged_enum_kotlin_source(
 
     let serializer_name = format!("{export_name}Serializer");
     let base = format!(
-        "sealed interface {export_name}{}",
+        "@Serializable(with = {serializer_name}::class) sealed interface {export_name}{}",
         kotlin_out_generic_params(&item_enum.generics)
     );
+    let serializer_head = serializer_declaration(export_name, &type_parameters);
     let serializer_object = format!(
-        "object {serializer_name} : KSerializer<{export_name}{generic_params}> {{ \
+        "{serializer_head} : KSerializer<{export_name}{generic_params}> {{ \
          override val descriptor: SerialDescriptor = buildClassSerialDescriptor(\"{export_name}\"); \
          override fun serialize(encoder: Encoder, value: {export_name}{generic_params}) {{ \
          val output = encoder as JsonEncoder; \
@@ -1310,21 +1491,23 @@ fn untagged_enum_kotlin_source(
             bare_value,
             &payload,
         ));
+        let subclass_serializer = kotlin_subclass_serializer_expr(&subclass_name, &type_parameters);
         serialize_arms.push(format!(
-            "is {subclass_name} -> output.json.encodeToJsonElement(serializer<{subclass_name}>(), value)"
+            "is {subclass_name} -> output.json.encodeToJsonElement({subclass_serializer}, value)"
         ));
         deserialize_chain = format!(
-            "{deserialize_chain}.recoverCatching {{ input.json.decodeFromJsonElement(serializer<{subclass_name}>(), element) as {export_name}{generic_params} }}"
+            "{deserialize_chain}.recoverCatching {{ input.json.decodeFromJsonElement({subclass_serializer}, element) as {export_name}{generic_params} }}"
         );
     }
 
     let serializer_name = format!("{export_name}Serializer");
     let base = format!(
-        "sealed interface {export_name}{}",
+        "@Serializable(with = {serializer_name}::class) sealed interface {export_name}{}",
         kotlin_out_generic_params(&item_enum.generics)
     );
+    let serializer_head = serializer_declaration(export_name, &type_parameters);
     let serializer_object = format!(
-        "object {serializer_name} : KSerializer<{export_name}{generic_params}> {{ \
+        "{serializer_head} : KSerializer<{export_name}{generic_params}> {{ \
          override val descriptor: SerialDescriptor = buildClassSerialDescriptor(\"{export_name}\"); \
          override fun serialize(encoder: Encoder, value: {export_name}{generic_params}) {{ \
          val output = encoder as JsonEncoder; \
