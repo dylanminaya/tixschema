@@ -1,6 +1,11 @@
-//! `ts_http_service()`, read off the emitted text's structure. No TypeScript toolchain is
-//! reachable here; `tests/service_schema_typescript_tests/type_check.rs` is what proves a
-//! complete implementation compiles against the emitted dispatcher.
+//! `ts_http_service()`, read off the emitted text.
+//!
+//! What these prove and what they cannot: the structure of the emitted TypeScript -- the route
+//! table, the request and response shapes, the fault handler and its default, the three helpers,
+//! and the dispatcher's own message assembly and status mapping. No TypeScript toolchain is
+//! reachable here, so none of them type-checks the bundle;
+//! `tests/service_schema_typescript_tests/type_check.rs` is what proves a complete implementation
+//! compiles against the emitted dispatcher.
 
 use super::{
     BYTES_HTTP_SERVICE, EMITTED_CLIENT_TEST_SERVICE, MIXED_HTTP_SERVICE, MULTIPART_HTTP_SERVICE,

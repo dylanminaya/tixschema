@@ -1,6 +1,10 @@
-//! Tests for the Swift type and `Codable`-codec backend (`swift` feature). `u64`/`usize` are
-//! refused at expansion under this feature, so none of these fixtures use them; that refusal is
-//! asserted separately in `src/model_schema/tests.rs`, where a real compile error is inspected.
+//! Tests for the Swift type and `Codable`-codec backend (`swift` feature).
+//!
+//! Each `#[model_schema]` item earns `swift_definition()` inside a `{snake_case}_swift` module
+//! beside it — the twin of `tests/dart_tests/tests.rs`, over Swift text instead of Dart text.
+//! `u64`/`usize` are refused at expansion under this feature, so none of these fixtures use
+//! them; the refusal itself is asserted in `src/model_schema/tests.rs`, where a real compile
+//! error can be inspected without failing this file's own build.
 
 use std::collections::HashMap;
 

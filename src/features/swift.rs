@@ -1,6 +1,14 @@
-//! Swift type and `Codable`-codec generation: emits one `swift_definition()` method per
-//! `#[model_schema]` item — a Swift `struct` or `enum` conforming to `Codable, Sendable`. A
-//! hand-written `init(from:)`/`encode(to:)` is written only where `Codable` synthesis cannot reach.
+//! Swift type and `Codable`-codec generation.
+//!
+//! Emits one `swift_definition()` method per `#[model_schema]` item — a Swift `struct` or `enum`
+//! conforming to `Codable, Sendable`, generating the way the Dart backend generates:
+//! `swift_schema_dispatch` is called directly from `exec_model_schema`, ahead of the
+//! `process_struct`/`process_enum`/`process_type_alias` dispatch that consumes the item, and reads
+//! its own borrow of it. Where Dart hand-writes `fromJson`/`toJson` for every field, Swift's own
+//! `Codable` synthesis covers the common shapes once a `CodingKeys` enum carries the wire
+//! spelling; a hand-written `init(from:)`/`encode(to:)` is written only where synthesis cannot
+//! reach — a `nullable` field, a non-string map key, a tuple, and the three enum shapes serde
+//! writes as something other than `{"case": payload}`.
 
 use core::cell::RefCell;
 use core::fmt::Write as _;
@@ -26,8 +34,9 @@ use crate::utils::{
 use crate::features::serde::{parse_serde_field_attributes, parse_serde_type_attributes};
 
 /// One field this module has decided belongs on the wire, resolved to the Swift property it
-/// earns — its Rust name, its lower-camel Swift name, its wire name, and the shape that drives
-/// its decode/encode statements.
+/// earns: its Rust name, its lower-camel Swift name, its wire name, whether the key always
+/// reaches the wire, whether it is a `#[serde(flatten)]` source, and the shape that drives its
+/// decode/encode statements.
 struct SwiftField {
     field_def: FieldDef,
     flatten: bool,

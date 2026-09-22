@@ -1,6 +1,16 @@
 //! Kotlin type generation with `kotlinx.serialization` annotations: one `kotlin_definition()` per
-//! `#[model_schema]` item. Most shapes carry nothing beyond `@Serializable`/`@SerialName`; the four
-//! the compiler plugin cannot express declaratively carry a small generated `KSerializer` instead.
+//! `#[model_schema]` item in a `{snake}_kotlin` module, dispatched from `exec_model_schema` the way
+//! the Dart backend is. Unlike Dart, Kotlin has no built-in JSON codec — the compiler plugin
+//! `kotlinx.serialization` reads the annotations this module writes and generates the encoder and
+//! decoder itself, so most shapes carry nothing beyond `@Serializable`/`@SerialName`. The four
+//! shapes the plugin cannot express declaratively (an adjacently- or externally-tagged enum, an
+//! untagged enum, and a tuple) carry a small generated `KSerializer` beside them instead.
+//!
+//! Fully independent of the `typescript`/`zod`/`jsonschema` module-and-delegate machinery, exactly
+//! as `features::dart` is: it reads its own borrow of the item ahead of the
+//! `process_struct`/`process_enum`/`process_type_alias` dispatch and carries no factory-cache or
+//! forward-reference deferral of its own, Kotlin resolving a reference across the whole file
+//! regardless of declaration order just as Dart does.
 
 use core::cell::{Cell, RefCell};
 use core::iter::once;
@@ -54,8 +64,10 @@ enum VariantPayload {
     Value(Box<FieldDef>),
 }
 
-/// What [`flatten_plan`] builds from a struct's fields: one `serialize_stmts`/`deserialize_stmts`
-/// entry per field in field order, and the constructor argument list in field order.
+/// What [`flatten_plan`] builds from a struct's fields: one `serialize_stmts` entry per field
+/// (own or flattened), one `deserialize_stmts` entry per field (own reads and flattened-struct
+/// `descriptor`-key reads interleaved, in field order, the map field's own read appended last so
+/// it can name every other field's own keys), and the constructor argument list in field order.
 struct FlattenPlan {
     ctor_args: Vec<String>,
     deserialize_stmts: Vec<String>,

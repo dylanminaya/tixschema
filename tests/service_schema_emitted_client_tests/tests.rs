@@ -637,8 +637,13 @@ impl UploadDocumentClientService<()> for UploadDocumentBackEnd {
 }
 
 /// A required `header_in` binding, so the TypeScript implementation reaches for the argument
-/// `create{Service}Dispatcher` now decodes — the Rust twin the Node driver beside this one is
-/// measured against. Carries a path placeholder so the message is the wire scalar it binds.
+/// `create{Service}Dispatcher` now decodes and hands it — the Rust twin the Node driver beside
+/// this one is measured against.
+///
+/// Carries a path placeholder purely so the message is the wire scalar it binds (mirroring
+/// `purge_document`'s own shape): a bodyless `GET`/`DELETE` operation with no placeholder at all
+/// is a separate, pre-existing gap between the two message-assembly rules, filed on its own and
+/// left for that task rather than this one.
 #[model_schema()]
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EchoRangeResponse {

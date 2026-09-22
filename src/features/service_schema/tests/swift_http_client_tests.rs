@@ -1,6 +1,8 @@
-//! The `http_rest` Swift client, read off the emitted text: no Swift toolchain is reachable
-//! here, so these tests read structure — a substring that must appear, and a name that must
-//! not — rather than type-checking the emitted source.
+//! The `http_rest` Swift client, read off the emitted text.
+//!
+//! No Swift toolchain is reachable here, so nothing here type-checks the emitted source — these
+//! tests read structure, the same way `dart_http_client_tests` reads the Dart backend's own
+//! output: a substring that must appear, and a name that must not.
 
 use super::{
     SWIFT_BYTES_HEADER_OUT_SERVICE, SWIFT_HEADER_VEC_OF_OPTIONS_SERVICE, SWIFT_HTTP_SERVICE,

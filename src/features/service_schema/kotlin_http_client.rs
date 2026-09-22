@@ -1,6 +1,28 @@
-//! The Kotlin `http_rest` client: request/response data classes, a transport seam, one sealed
-//! result per reply operation, and one `suspend` method per operation, each helper prefixed with
-//! the service's own name since Kotlin has no per-file privacy to keep two vendored services apart.
+//! The Kotlin `http_rest` client: request/response data classes, a transport seam the hosting
+//! application implements, one sealed result per reply operation, and one `suspend` method per
+//! operation that builds a plain-terms request from the operation's own message and decodes the
+//! answer by status — mirroring [`super::dart_http_client`] statement for statement, since the URL,
+//! query and header rules it builds on were proven by execution on Dart.
+//!
+//! # A caller reads the outcome; one-way still throws
+//!
+//! A reply method answers `{Service}{Operation}Result` — a sealed interface of `Ok`/`Declared`/
+//! `Fault` nested inside it — and never throws for a declared error or a fault. A one-way operation
+//! still answers plainly (`Unit`) and throws the fault-only `{Service}Refusal`, having no reply arm
+//! to carry a fault through.
+//!
+//! # The fault is the same generated type every other surface answers faults through
+//!
+//! `{Service}FaultFields`/`{Service}FaultKind` already carry `#[model_schema()]`, so their Kotlin
+//! comes from the ordinary [`crate::features::kotlin`] dispatch — this module reuses them rather
+//! than inventing a fault shape of its own.
+//!
+//! # Naming
+//!
+//! Every private helper here is prefixed with the service's own lower-camel name, mirroring the
+//! Dart client's own `_{fn_prefix}Http...` convention — Kotlin has no per-file privacy narrower
+//! than a `private` modifier, but two services vendored into one bundle would still collide on an
+//! unprefixed top-level name.
 
 use super::result::result_name;
 use crate::features::kotlin::kotlin_typename;
@@ -17,7 +39,8 @@ use syn::Type;
 
 /// One reply operation's own success shape: the Kotlin type `Ok`'s `value` carries, and any
 /// auxiliary `data class` declaration that type needs published ahead of the sealed result —
-/// `body = "bytes"` and `body = "stream"` each answer more than the bare success type.
+/// `body = "bytes"` and `body = "stream"` each answer more than the bare success type, and a
+/// declared `header_out` composes onto whichever of the two applies.
 struct SuccessShape {
     aux_declaration: Option<String>,
     type_name: String,

@@ -1,6 +1,11 @@
-//! The emitted Swift client run under a Swift toolchain: codec round trips, the `http_rest`
-//! client's own URLs, and the `ws_rpc` client's own scenarios against an in-memory socket.
-//! Stands down exactly as [`super::run_dart`] does where no Swift toolchain is reachable.
+//! The emitted Swift client run under a Swift toolchain: the codec rows the Swift spike proved —
+//! renamed and optional fields, the tagged and untagged enum forms, a tuple, a generic struct,
+//! non-string map keys — round-tripped through the emitted `Codable` text, the `http_rest`
+//! client's own URLs (the same three `run_dart.rs` asserts), and the `ws_rpc` client's own
+//! scenarios against an in-memory socket.
+//!
+//! Every group runs `swift main.swift` in immediate mode — no package manifest, Foundation only —
+//! standing down exactly as [`super::run_dart`] does where no Swift toolchain is reachable.
 
 #![cfg(feature = "swift")]
 
