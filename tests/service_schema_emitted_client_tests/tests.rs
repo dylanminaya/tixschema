@@ -4,9 +4,9 @@
 
 /// The codec rows the Swift spike proved — renamed and optional fields, the tagged and untagged
 /// enum forms, a tuple, a generic struct, non-string map keys — declared once so `run_swift.rs`
-/// can round-trip each through the emitted `swift_definition()` text and this file's own
-/// `serde_json` writes the same JSON against.
-#[cfg(feature = "swift")]
+/// and `run_kotlin.rs` can each round-trip them through their own emitted definition text and
+/// this file's own `serde_json` writes the same JSON against.
+#[cfg(any(feature = "swift", feature = "kotlin"))]
 pub mod swift_codec_fixture {
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
