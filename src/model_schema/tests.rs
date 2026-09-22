@@ -1906,8 +1906,7 @@ fn field_map_key_error(field_type: &proc_macro2::TokenStream) -> String {
         .map_or_else(String::new, |err| err.to_compile_error().to_string())
 }
 
-/// A `u64` or `usize` field is refused for Swift at that type's own expansion, spanned on the
-/// field's declared type and naming both the field and the refused primitive; `i64` earns nothing.
+/// A `u64` or `usize` field is refused for Swift; `i64` earns nothing.
 #[cfg(feature = "swift")]
 #[test]
 fn a_u64_or_usize_field_is_refused_for_swift() {
@@ -3579,8 +3578,7 @@ fn the_constraint_docs_are_silent_for_a_parameter_typed_field() {
     );
 }
 
-/// `u64` and `usize` have no Kotlin mapping, refused with the same message and consequence the
-/// Swift target's own width refusal carries.
+/// `u64` and `usize` have no Kotlin mapping, refused the same way Swift's own width refusal is.
 #[cfg(feature = "kotlin")]
 #[test]
 fn a_kotlin_field_reaching_u64_or_usize_is_refused() {
@@ -3609,8 +3607,7 @@ fn a_kotlin_field_reaching_u64_or_usize_is_refused() {
     }
 }
 
-/// A field written at one of the enclosing item's own type parameters is never refused: Kotlin
-/// generics are opaque to the class that declares them, exactly like TypeScript's and Zod's own.
+/// A field written at one of the enclosing item's own type parameters is never refused.
 #[cfg(feature = "kotlin")]
 #[test]
 fn a_kotlin_type_parameter_is_never_refused_even_when_it_could_be_filled_with_u64() {

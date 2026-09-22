@@ -1,32 +1,6 @@
 //! The Swift `http_rest` client: one transport seam the app implements, one `async` method per
-//! operation, mirroring the Dart client's request grammar statement for statement.
-//!
-//! # A caller reads the outcome; one-way still throws
-//!
-//! A reply operation answers `Result<Success, Failure>` and never throws; a one-way operation
-//! answers `Void` and throws only the fault-only `{Service}Refusal`, having no reply arm to carry
-//! a fault through otherwise — the same outcome shape the TypeScript clients report through.
-//!
-//! # Swift needs two helpers Dart gets for free
-//!
-//! Dart's `Uri.encodeComponent` and `List<String>.join('&')` have no Foundation equivalent that
-//! matches them exactly, so this module writes `{fnPrefix}PercentEncode`/`{fnPrefix}QueryText`
-//! once per service — the RFC 3986 unreserved set plus `-_.!~*'()`, the same characters
-//! `Uri.encodeComponent` leaves unescaped.
-//!
-//! # A message property is reached in Swift's own spelling
-//!
-//! A generated message's Swift property is always `RenameRule::CamelCase.apply_to_field` of the
-//! raw Rust field name — the same spelling an `http(...)` path placeholder or a bodyless method's
-//! own field name is written in — regardless of any serde rename on the field, since Swift's own
-//! `Codable` synthesis carries the wire spelling through a separate `CodingKeys` enum instead.
-//!
-//! # A branded newtype is a value wrapper, not a bare scalar
-//!
-//! Swift's own `Codable` synthesis has no union type, so a branded newtype (`ConversationId`)
-//! publishes a struct with one `value` property rather than TypeScript's intersection brand. A
-//! placeholder or header reading a sibling type's value therefore reads `.value`, never the
-//! sibling type itself.
+//! operation. A reply operation answers `Result<Success, Failure>` and never throws; a one-way
+//! operation answers `Void` and throws only the fault-only `{Service}Refusal`.
 
 use crate::field_type::{FieldDefType, get_field_def};
 use crate::rename_rule::RenameRule;
@@ -184,9 +158,8 @@ fn failure_enum(named: &str, operation: &OperationDef) -> Option<String> {
 }
 
 /// `{Named}Fault`, the shared fault type both this client and `swift_ws_client()` answer a
-/// defect with, bound once here over the service's generated `{Named}FaultFields` — declared
-/// unconditionally, since `swift_ws_client()`'s own transport-failure and failed-validation
-/// helpers name it whether or not this client also publishes.
+/// defect with — declared unconditionally, since `swift_ws_client()`'s own helpers name it
+/// whether or not this client also publishes.
 fn fault_alias(named: &str) -> String {
     let fields = fault_fields_typescript_name(named);
     format!("public typealias {named}Fault = {fields}")
@@ -408,12 +381,8 @@ fn path_build_stmt(fn_prefix: &str, operation: &OperationDef, shape: &HttpShape)
 /// field with nowhere else to go is refused at parse time — so every push is guarded by an
 /// `if let`, matching the Dart client's own null check.
 fn named_query_build_stmt(shape: &HttpShape) -> String {
-    // The object walked below is keyed the way `JSONEncoder` wrote it — the message's own
-    // `CodingKeys` wire spelling, which this macro cannot see past its default (the raw field
-    // name, untransformed) since an author's own message carries no rename this crate can read.
-    // That default is exactly the path template's own placeholder spelling, so the exclusion
-    // reads it raw — never through Swift's own camelCase property spelling, which is a different
-    // name for the same field and mirrors the Dart client's own untransformed exclusion.
+    // The object walked below is keyed by `JSONEncoder`'s wire spelling (the raw field name),
+    // so the exclusion below reads placeholder names raw, never Swift's camelCase spelling.
     let bound = shape
         .placeholder_names()
         .iter()
