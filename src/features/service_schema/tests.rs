@@ -25,6 +25,8 @@ mod http_client_tests;
 mod http_service_tests;
 #[cfg(feature = "kotlin")]
 mod kotlin_http_client_tests;
+#[cfg(feature = "kotlin")]
+mod kotlin_ws_client_tests;
 #[cfg(feature = "zod")]
 mod service_tests;
 #[cfg(feature = "swift")]
@@ -52,6 +54,8 @@ use super::http_client;
 use super::http_service;
 #[cfg(feature = "kotlin")]
 use super::kotlin_http_client;
+#[cfg(feature = "kotlin")]
+use super::kotlin_ws_client;
 #[cfg(feature = "zod")]
 use super::service;
 #[cfg(feature = "swift")]
@@ -642,6 +646,27 @@ const KOTLIN_UNIT_SUCCESS_HTTP_SERVICE: &str = "
     }
 ";
 
+/// The design's own running example: a reply operation over a `Named` message answering a
+/// declared success or error, and a one-way operation over a branded newtype. Kotlin-gated mirror
+/// of `SWIFT_WS_SERVICE`, since it exercises `kotlin_ws_client()` independent of `zod`/`dart`.
+#[cfg(feature = "kotlin")]
+const KOTLIN_WS_SERVICE: &str = "
+    pub trait ConversationClientService<Ctx> {
+        #[service_schema_op(http(
+            method = \"GET\",
+            path = \"/v1/conversations/{conversation_id}/window\",
+            error_status(NotFound = 404),
+        ))]
+        async fn window(&self, ctx: &Ctx, req: WindowRequest) -> Result<WindowPage, WindowError>;
+
+        #[service_schema_op(
+            one_way,
+            http(method = \"DELETE\", path = \"/v1/conversations/{conversation_id}\",)
+        )]
+        async fn purge_conversation(&self, ctx: &Ctx, conversation_id: ConversationId);
+    }
+";
+
 /// A service exercising both operation shapes `ws_rpc` answers for: a reply operation over a
 /// `Named` message, and a one-way operation. Named for the design's own running example.
 #[cfg(feature = "dart")]
@@ -943,6 +968,11 @@ fn swift_http_client_of(source: &str) -> String {
 #[cfg(feature = "kotlin")]
 fn kotlin_http_client_of(source: &str) -> String {
     kotlin_http_client::emit(&parsed(source)).join("\n\n")
+}
+
+#[cfg(feature = "kotlin")]
+fn kotlin_ws_client_of(source: &str) -> String {
+    kotlin_ws_client::emit(&parsed(source)).join("\n\n")
 }
 
 fn parsed(source: &str) -> ServiceDef {
