@@ -896,6 +896,7 @@ mod branded_constrained_json_schema_tests {
 #[cfg(all(feature = "zod", feature = "typescript", feature = "serde"))]
 mod constrained_generic_branded_tests {
     use super::*;
+    use core::fmt;
 
     #[model_schema(
         minLength = 24,
@@ -935,6 +936,41 @@ mod constrained_generic_branded_tests {
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(transparent)]
     pub struct OuterId<WrapType>(pub WrapType);
+
+    /// A reference filling whose `Display` writes a name, the shape a portable payload uses.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(tag = "type", rename_all = "kebab-case")]
+    pub enum StrictReference {
+        ById { id: String },
+        ByName { name: String },
+    }
+
+    impl fmt::Display for StrictReference {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::ById { id } => write!(f, "{id}"),
+                Self::ByName { name } => write!(f, "{name}"),
+            }
+        }
+    }
+
+    /// A holder declared the way consumers declare one today: no `'static` anywhere.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(bound(deserialize = "IdType: serde::de::DeserializeOwned"))]
+    pub struct StrictHolder<IdType: fmt::Display> {
+        pub id: StrictDocumentId<IdType>,
+    }
+
+    /// An unconstrained brand, so a check that fires on it can only be the outer one.
+    #[model_schema()]
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(transparent)]
+    pub struct PlainLabel(pub String);
+
+    #[model_schema(minLength = 10, default_types(WrapType = PlainLabel))]
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(transparent)]
+    pub struct LabelId<WrapType>(pub WrapType);
 
     /// The builder every call to the factory runs through carries no string check at all: a caller
     /// filling `IdType` with something other than the declared default — an `ObjectId` schema, say
@@ -1043,6 +1079,56 @@ mod constrained_generic_branded_tests {
             StrictDocumentId(0_u32).validate().unwrap_err(),
             vec!["id must not be zero".to_owned()]
         );
+    }
+
+    #[test]
+    fn a_filling_other_than_the_default_is_read_without_the_defaults_bounds() {
+        let by_name: StrictDocumentId<StrictReference> =
+            serde_json::from_str(r#"{"type":"by-name","name":"ID Afiliado"}"#).unwrap();
+        assert_eq!(
+            by_name,
+            StrictDocumentId(StrictReference::ByName {
+                name: "ID Afiliado".to_owned()
+            })
+        );
+
+        let number: StrictDocumentId<u32> = serde_json::from_str("7").unwrap();
+        assert_eq!(number, StrictDocumentId(7));
+
+        let held: StrictHolder<StrictReference> =
+            serde_json::from_str(r#"{"id":{"type":"by-name","name":"ID Afiliado"}}"#).unwrap();
+        assert_eq!(
+            held.id,
+            StrictDocumentId(StrictReference::ByName {
+                name: "ID Afiliado".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn the_default_keeps_its_bounds_inside_a_holder() {
+        let refused: Result<StrictHolder<String>, _> = serde_json::from_str(r#"{"id":"abc"}"#);
+        let message = refused.unwrap_err().to_string();
+        assert!(
+            message.contains("too short: minimum length is 24, got 3"),
+            "Got: {message}"
+        );
+    }
+
+    #[test]
+    fn a_non_string_default_is_the_one_filling_the_bounds_reach() {
+        let short: Result<LabelId<PlainLabel>, _> = serde_json::from_str(r#""abc""#);
+        let message = short.unwrap_err().to_string();
+        assert!(
+            message.contains("too short: minimum length is 10, got 3"),
+            "Got: {message}"
+        );
+
+        let long: LabelId<PlainLabel> = serde_json::from_str(r#""abcdefghijkl""#).unwrap();
+        assert_eq!(long, LabelId(PlainLabel("abcdefghijkl".to_owned())));
+
+        let not_the_default: LabelId<String> = serde_json::from_str(r#""abc""#).unwrap();
+        assert_eq!(not_the_default, LabelId("abc".to_owned()));
     }
 }
 

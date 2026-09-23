@@ -651,6 +651,12 @@ argument bound to the parameter's declared filling (`json_argument_value`, defau
 bounds through the same `allOf` a named inner is narrowed through — never the inert `{}` a
 parameter with no default at all would describe as.
 
+The serde read holds the same line: `build_branded_validation`'s generic `deserialize_value` hook
+compares `typeid::of::<T>()` against the inner type with each parameter's declared default
+substituted in (`substitute_declared_defaults`, reading `declared_default_syn_type`), and only
+runs the checks when they are equal, so the read reaches the same one filling `$SchemaDefault` and
+`validate()` do.
+
 ### Adding Examples to Types
 
 To add examples to your types for inclusion in Zod schemas:

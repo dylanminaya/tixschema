@@ -15,6 +15,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ```
 
+A crate that declares any `pattern` also names `regex`, and one that declares a generic branded newtype with `minLength`/`maxLength`/`pattern` also names `typeid`, because the generated checks call them directly.
+
 ### Frontend Dependencies (Zod v4)
 
 **Important:** This crate requires Zod v4 for full functionality, especially JSON schema generation. Zod v3 is not supported.
@@ -1255,6 +1257,8 @@ export const DocumentId$SchemaDefault = DocumentId$SchemaFactory(
 ```
 
 `validate()` itself is emitted only at that same declared default — `impl DocumentId<String> { pub fn validate(&self) -> Result<(), Vec<String>> { … } }`, never a blanket `impl<IdType> DocumentId<IdType>` — because Rust inherent impls do not specialize: a blanket one would make a downstream `impl DocumentId<ObjectId> { pub fn validate(&self) -> … }` a duplicate-definition error. Pinning `validate()` to the default leaves that door open for an author who wants their own validation on another instantiation; the schema delegates (`ts_definition()`, `zod_schema()`, `json_schema()`, …) are unaffected and stay on the type's own generic `impl<IdType> DocumentId<IdType>`, since they do not depend on the constraints.
+
+The serde read follows the same rule: the generated `deserialize_with` hook runs the checks only when the filling being read is the declared default, and reads any other filling unconstrained, the same as `$SchemaFactory`.
 
 An entry `default_types` leaves out falls back to `String`, the same fallback a parameter with no declared filling gets everywhere else the declaration is read — so a constrained bare-parameter brand with no `default_types` at all still compiles. Only the `jsonschema` feature actually requires a declared entry for every parameter, through the unrelated requirement in the table above.
 
