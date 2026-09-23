@@ -4562,9 +4562,10 @@ fn process_tuple_struct(
 ))]
 fn build_branded_validation(
     args: &ModelSchemaArgs,
-    is_generic: bool,
+    generic_params: &[String],
     inner_ty: &syn::Type,
 ) -> Option<BrandedValidation> {
+    let is_generic = !generic_params.is_empty();
     args.has_string_constraints().then(|| {
         let measures_path = branded_inner_measures_path(inner_ty);
         let (checked_param, rendering) = checked_value_parts(measures_path);
@@ -4611,6 +4612,8 @@ fn build_branded_validation(
 
         let refusal = refusal_from_violations();
         let deserialize_fn = if is_generic {
+            let default_ty =
+                substitute_declared_defaults(inner_ty, generic_params, &args.default_types);
             quote! {
                 pub fn deserialize_value<'de, D, T>(deserializer: D) -> Result<T, D::Error>
                 where
@@ -4619,7 +4622,9 @@ fn build_branded_validation(
                 {
                     use serde::Deserialize;
                     let v = T::deserialize(deserializer)?;
-                    validate_value(#checked_v).map_err(#refusal)?;
+                    if ::typeid::of::<T>() == ::typeid::of::<#default_ty>() {
+                        validate_value(#checked_v).map_err(#refusal)?;
+                    }
                     Ok(v)
                 }
             }
@@ -4643,6 +4648,83 @@ fn build_branded_validation(
             validate_fn,
         }
     })
+}
+
+/// Every one of `parameters` found in `ty`, replaced by its `default_types` filling via
+/// [`declared_default_syn_type`]. Recurses through path arguments, references, arrays, slices,
+/// tuples, parens and groups; any other shape comes back unchanged.
+#[cfg(all(
+    feature = "serde",
+    any(feature = "typescript", feature = "zod", feature = "jsonschema")
+))]
+fn substitute_declared_defaults(
+    ty: &syn::Type,
+    parameters: &[String],
+    default_types: &[(syn::Ident, syn::Type)],
+) -> syn::Type {
+    match ty {
+        syn::Type::Path(type_path) => {
+            if type_path.qself.is_none()
+                && let Some(ident) = type_path.path.get_ident()
+                && parameters.iter().any(|parameter| ident == parameter)
+            {
+                return declared_default_syn_type(&ident.to_string(), default_types);
+            }
+            let mut rewritten = type_path.clone();
+            for segment in &mut rewritten.path.segments {
+                if let syn::PathArguments::AngleBracketed(bracketed) = &mut segment.arguments {
+                    for argument in &mut bracketed.args {
+                        if let syn::GenericArgument::Type(inner) = argument {
+                            *inner = substitute_declared_defaults(inner, parameters, default_types);
+                        }
+                    }
+                }
+            }
+            syn::Type::Path(rewritten)
+        }
+        syn::Type::Reference(reference) => {
+            let mut rewritten = reference.clone();
+            *rewritten.elem =
+                substitute_declared_defaults(&reference.elem, parameters, default_types);
+            syn::Type::Reference(rewritten)
+        }
+        syn::Type::Array(array) => {
+            let mut rewritten = array.clone();
+            *rewritten.elem = substitute_declared_defaults(&array.elem, parameters, default_types);
+            syn::Type::Array(rewritten)
+        }
+        syn::Type::Slice(slice) => {
+            let mut rewritten = slice.clone();
+            *rewritten.elem = substitute_declared_defaults(&slice.elem, parameters, default_types);
+            syn::Type::Slice(rewritten)
+        }
+        syn::Type::Tuple(tuple) => {
+            let mut rewritten = tuple.clone();
+            for elem in &mut rewritten.elems {
+                *elem = substitute_declared_defaults(elem, parameters, default_types);
+            }
+            syn::Type::Tuple(rewritten)
+        }
+        syn::Type::Paren(paren) => {
+            let mut rewritten = paren.clone();
+            *rewritten.elem = substitute_declared_defaults(&paren.elem, parameters, default_types);
+            syn::Type::Paren(rewritten)
+        }
+        syn::Type::Group(group) => {
+            let mut rewritten = group.clone();
+            *rewritten.elem = substitute_declared_defaults(&group.elem, parameters, default_types);
+            syn::Type::Group(rewritten)
+        }
+        syn::Type::FnPtr(_)
+        | syn::Type::ImplTrait(_)
+        | syn::Type::Infer(_)
+        | syn::Type::Macro(_)
+        | syn::Type::Never(_)
+        | syn::Type::Ptr(_)
+        | syn::Type::TraitObject(_)
+        | syn::Type::Verbatim(_)
+        | _ => ty.clone(),
+    }
 }
 
 /// Whether a brand's constrained checks reach its inner value as a path rather than through
@@ -5582,7 +5664,7 @@ fn process_branded_newtype(item_struct: syn::ItemStruct, args: &ModelSchemaArgs)
 
     // --- Generate validation code for constrained branded newtypes ---
     #[cfg(feature = "serde")]
-    let branded_validation = build_branded_validation(args, !generic_params.is_empty(), inner_ty);
+    let branded_validation = build_branded_validation(args, &generic_params, inner_ty);
 
     // --- Build schema module impl items ---
     #[cfg(feature = "jsonschema")]

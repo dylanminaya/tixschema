@@ -5355,6 +5355,35 @@ fn string_constraints_over_the_brands_own_type_parameter_with_a_string_default_p
     assert!(errors.is_empty(), "got: {errors:?}");
 }
 
+/// A bare, a wrapped, and an unrelated parameter each substitute as expected.
+#[cfg(all(
+    feature = "serde",
+    any(feature = "typescript", feature = "zod", feature = "jsonschema")
+))]
+#[test]
+fn declared_defaults_are_substituted_through_the_inners_shape() {
+    let parameters = ["IdType".to_owned()];
+    let default_types = vec![(syn::parse_quote!(IdType), syn::parse_quote!(String))];
+
+    let bare: syn::Type = syn::parse_quote!(IdType);
+    assert_eq!(
+        super::substitute_declared_defaults(&bare, &parameters, &default_types),
+        syn::parse_quote!(String)
+    );
+
+    let wrapped: syn::Type = syn::parse_quote!(Box<IdType>);
+    assert_eq!(
+        super::substitute_declared_defaults(&wrapped, &parameters, &default_types),
+        syn::parse_quote!(Box<String>)
+    );
+
+    let unrelated: syn::Type = syn::parse_quote!(u32);
+    assert_eq!(
+        super::substitute_declared_defaults(&unrelated, &parameters, &default_types),
+        syn::parse_quote!(u32)
+    );
+}
+
 /// A bare-parameter inner whose declared default is not string-shaped is refused exactly where a
 /// concrete non-string argument is refused, except the message names the *default* rather than the
 /// parameter — that is what the author has to change, since the parameter itself is never asked.
@@ -7119,7 +7148,7 @@ fn constrained_brand_inner_spanned_tokens(source: &str, inner: &str) -> (usize, 
     let item: syn::ItemStruct = syn::parse_str(source).unwrap();
     let args = super::parse_model_schema_args(quote::quote! { pattern = "^[a-z]+$" });
     let validation =
-        super::build_branded_validation(&args, false, &item.fields.iter().next().unwrap().ty)
+        super::build_branded_validation(&args, &[], &item.fields.iter().next().unwrap().ty)
             .unwrap();
     let module_ident = syn::Ident::new("slug_id_schema", proc_macro2::Span::call_site());
     let (_, _, validate_method) = super::inject_branded_serde_attrs(
@@ -7174,7 +7203,7 @@ fn constrained_brand_emission(inner: &str, module: &str) -> (String, String, Str
     );
     let args = super::parse_model_schema_args(quote::quote! { pattern = "^[a-z]+$" });
     let validation =
-        super::build_branded_validation(&args, false, &item.fields.iter().next().unwrap().ty)
+        super::build_branded_validation(&args, &[], &item.fields.iter().next().unwrap().ty)
             .unwrap();
     let module_ident = syn::Ident::new(module, proc_macro2::Span::call_site());
     let (_, _, validate_method) = super::inject_branded_serde_attrs(
@@ -11613,6 +11642,18 @@ fn expansion_over(source: &str) -> proc_macro2::TokenStream {
     )
 }
 
+/// [`expansion_over`], carrying the `#[model_schema(...)]` arguments a bare source cannot write.
+#[cfg(all(
+    feature = "serde",
+    any(feature = "typescript", feature = "zod", feature = "jsonschema")
+))]
+fn expansion_with_args_over(args: &str, source: &str) -> proc_macro2::TokenStream {
+    super::exec_model_schema(
+        syn::parse_str(args).unwrap(),
+        syn::parse_str(source).unwrap(),
+    )
+}
+
 /// The seam's fallthrough, the one sink no item that compiles can reach: an item whose shape the
 /// macro has no expansion for earns the refusal, spanned on the item so the caret lands on the
 /// declaration rather than on the attribute.
@@ -12206,4 +12247,27 @@ fn untagged_enum_registry_answers_only_after_the_enum_is_recorded() {
     record_untagged_enum("UntaggedEnumRegistryProbeAbove");
     let declared_above: syn::Type = syn::parse_quote!(UntaggedEnumRegistryProbeAbove);
     assert!(is_recorded_untagged_enum(&declared_above));
+}
+
+/// A brand over `Box<IdType>` expands without panicking, checked against `Box<String>`.
+#[cfg(all(
+    feature = "serde",
+    any(feature = "typescript", feature = "zod", feature = "jsonschema")
+))]
+#[test]
+fn a_constrained_brand_over_a_wrapped_parameter_expands_against_the_wrapped_default() {
+    let tokens = expansion_with_args_over(
+        "minLength = 3, default_types(IdType = String)",
+        "
+        #[derive(Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct BoxedId<IdType>(pub Box<IdType>);
+        ",
+    );
+    let rendered = tokens.to_string();
+    assert!(!rendered.contains("compile_error"), "got: {rendered}");
+    assert!(
+        rendered.contains(":: typeid :: of :: < Box < String > >"),
+        "got: {rendered}"
+    );
 }
