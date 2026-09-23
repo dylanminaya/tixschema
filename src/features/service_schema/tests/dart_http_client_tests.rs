@@ -72,12 +72,15 @@ fn the_seam_carries_a_structural_request_record_in_and_response_record_out() {
     let written = dart_http_client_of(DART_HTTP_SERVICE);
     assert!(
         written.contains(
-            "Future<({int status, List<(String, String)> headers, List<int> body})> send(\n    \
-             ({String method, String path, String query, List<(String, String)> headers, List<int> body}) request,\n  \
+            "Future<({int status, List<(String, String)> headers, List<int> body, \
+             Stream<List<int>> bodyStream})> send(\n    \
+             ({String method, String path, String query, List<(String, String)> headers, \
+             List<int> body, List<(String, dynamic)> parts}) request,\n  \
              );"
         ),
         "the request and response are records, not named classes, so every service's transport \
-         reads the exact same anonymous shape. Got: {written}"
+         reads the exact same anonymous shape — `bodyStream` and `parts` included, whether or \
+         not this particular service streams or uploads multipart. Got: {written}"
     );
 }
 
@@ -489,22 +492,36 @@ fn a_stream_operation_with_header_out_wraps_the_record_in_a_tuple() {
     );
 }
 
+/// The exact `send` signature every service's own transport interface carries — `bodyStream` and
+/// `parts` included — whether or not that particular service ever streams or uploads multipart.
+/// This is the literal fdz regression: before this fix, a JSON-only service's own interface
+/// carried neither field, so a class implementing two services' interfaces at once failed `dart
+/// analyze` with `invalid_override` (two different anonymous record shapes for one method name),
+/// contradicting this very module's own class doc ("one hand-written implementation... satisfies
+/// every service's interface").
+const SEAM_SEND_SIGNATURE: &str = "  Future<({int status, List<(String, String)> headers, \
+     List<int> body, Stream<List<int>> bodyStream})> send(\n    \
+     ({String method, String path, String query, List<(String, String)> headers, List<int> \
+     body, List<(String, dynamic)> parts}) request,\n  \
+     );";
+
 #[test]
-fn the_seam_carries_a_lazy_body_stream_only_where_a_service_declares_one() {
-    let plain = dart_http_client_of(DART_HTTP_SERVICE);
-    assert!(
-        !plain.contains("bodyStream"),
-        "a service with no streamed operation carries no `bodyStream` field. Got: {plain}"
-    );
+fn every_service_s_transport_interface_carries_the_identical_send_signature() {
+    for (source, service) in [
+        (DART_HTTP_SERVICE, "a JSON-only service"),
+        (DART_STREAM_HTTP_SERVICE, "a streamed service"),
+        (DART_MULTIPART_HTTP_SERVICE, "a multipart service"),
+    ] {
+        let written = dart_http_client_of(source);
+        assert!(
+            written.contains(SEAM_SEND_SIGNATURE),
+            "{service}'s own `send` must read the exact same anonymous shape every other \
+             service's does — Dart records are compared structurally, so a shape that varied by \
+             service would make one hand-written implementation unable to satisfy two services' \
+             interfaces at once. Got: {written}"
+        );
+    }
     let streamed = dart_http_client_of(DART_STREAM_HTTP_SERVICE);
-    assert!(
-        streamed.contains(
-            "Future<({int status, List<(String, String)> headers, List<int> body, \
-             Stream<List<int>> bodyStream})> send("
-        ),
-        "a service with a streamed operation carries `bodyStream` on the seam's own response \
-         record, and no HTTP package is named to spell `Stream`. Got: {streamed}"
-    );
     for named in [
         "package:http",
         "package:dio",
@@ -652,4 +669,68 @@ fn a_unit_success_answers_the_field_less_ok_member() {
         "got: {method}"
     );
     assert!(!method.contains("ResultOk(null)"), "got: {method}");
+}
+
+// -------------------------------------------------------------------------------------------
+// jzv: cancellation gets its own signal — a marker exception this crate emits, recognised by
+// type — rather than every exception `send` throws becoming the same generic transport fault.
+// -------------------------------------------------------------------------------------------
+
+#[test]
+fn the_transport_emits_its_own_cancellation_marker_exactly_once_and_it_carries_nothing() {
+    let written = dart_http_client_of(DART_HTTP_SERVICE);
+    assert_eq!(
+        written
+            .matches("class DocumentClientServiceHttpTransportCancelled implements Exception {}")
+            .count(),
+        1,
+        "the emitter itself names the marker, rather than leaving an adapter to invent its own \
+         ad hoc exception type no generated client would recognise. Got: {written}"
+    );
+}
+
+#[test]
+fn a_reply_method_recognises_the_marker_by_type_and_answers_the_cancelled_arm_never_a_fault() {
+    let written = dart_http_client_of(DART_HTTP_SERVICE);
+    let method = method_body(&written, "createDocument");
+    assert!(
+        method.contains(
+            "if (uncarried is DocumentClientServiceHttpTransportCancelled) {\n        \
+             return DocumentClientServiceCreateDocumentResultCancelled();\n      \
+             }"
+        ),
+        "a cancellation is told apart from a network/server failure by `is`, never by parsing a \
+         fault's own detail text, and answers the result pair's own `Cancelled` member. \
+         Got: {method}"
+    );
+    assert!(
+        method.contains(
+            "return DocumentClientServiceCreateDocumentResultFault(_documentClientServiceHttpTransportFailure('create-document', '$uncarried'));"
+        ),
+        "every other exception still becomes a fault, never rethrown, exactly as before. \
+         Got: {method}"
+    );
+}
+
+#[test]
+fn a_one_way_method_rethrows_the_marker_instead_of_wrapping_it_into_a_refusal() {
+    let written = dart_http_client_of(DART_HTTP_SERVICE);
+    let method = method_body(&written, "purgeDocument");
+    assert!(
+        method.contains(
+            "if (uncarried is DocumentClientServiceHttpTransportCancelled) {\n        \
+             rethrow;\n      \
+             }"
+        ),
+        "a one-way method has no reply arm to carry a cancellation through, so it rethrows the \
+         same marker the caller can catch by type, instead of wrapping it into \
+         `DocumentClientServiceHttpRefusal`. Got: {method}"
+    );
+    assert!(
+        method.contains(
+            "throw DocumentClientServiceHttpRefusal(_documentClientServiceHttpTransportFailure('purge-document', '$uncarried'));"
+        ),
+        "every other exception still becomes the fault-only refusal, exactly as before. \
+         Got: {method}"
+    );
 }

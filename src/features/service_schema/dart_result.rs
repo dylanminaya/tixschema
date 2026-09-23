@@ -7,9 +7,12 @@
 //! shape a codec reads off the wire.
 //!
 //! Named exactly as [`super::result`] names the TypeScript twin (`{Service}{Operation}Result`), and
-//! its three members exactly as [`crate::features::dart`] names every other sealed member: the base
-//! name plus the arm it stands for — `Ok` for the success, `Operation` and `Fault` for the two arms
-//! of the Rust client's own `CallError`.
+//! its members exactly as [`crate::features::dart`] names every other sealed member: the base name
+//! plus the arm it stands for — `Ok` for the success, `Operation` and `Fault` for the two arms of
+//! the Rust client's own `CallError`, and `Cancelled` for the one arm neither of those two names: a
+//! `{Service}HttpTransportCancelled` the transport threw ([`super::dart_http_client`]'s own
+//! `send_stmt_reply`), carrying nothing beyond its own type, so a caller tells "the user backed
+//! out" apart from a `Fault` by matching on the pair rather than parsing a fault's own detail.
 //!
 //! A one-way operation declared no reply and therefore no pair, mirroring [`super::result`].
 
@@ -50,14 +53,16 @@ fn result_pair(named: &str, operation: &OperationDef) -> Option<String> {
     let fault = fault_fields_typescript_name(named);
     let ident = &operation.ident;
     Some(format!(
-        "/// What `{ident}` answers: the success, the error the operation declared, or a fault it \
+        "/// What `{ident}` answers: the success, the error the operation declared, a fault it \
          never\n\
-         /// declared.\n\
+         /// declared, or that the caller itself cancelled the call.\n\
          sealed class {published} {{\n  const {published}();\n}}\n\n\
          {ok_member}\n\n\
          final class {published}Operation extends {published} {{\n  \
          const {published}Operation(this.error);\n  final {failure} error;\n}}\n\n\
          final class {published}Fault extends {published} {{\n  \
-         const {published}Fault(this.fault);\n  final {fault} fault;\n}}"
+         const {published}Fault(this.fault);\n  final {fault} fault;\n}}\n\n\
+         final class {published}Cancelled extends {published} {{\n  \
+         const {published}Cancelled();\n}}"
     ))
 }
