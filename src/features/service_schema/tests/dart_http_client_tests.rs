@@ -10,13 +10,7 @@ use super::{
     dart_http_client_of,
 };
 
-/// The exact `send` signature every service's own transport interface carries — `bodyStream` and
-/// `parts` included — whether or not that particular service ever streams or uploads multipart.
-/// This is the literal fdz regression: before this fix, a JSON-only service's own interface
-/// carried neither field, so a class implementing two services' interfaces at once failed `dart
-/// analyze` with `invalid_override` (two different anonymous record shapes for one method name),
-/// contradicting this very module's own class doc ("one hand-written implementation... satisfies
-/// every service's interface").
+/// The `send` signature every service's transport interface carries, whatever it declares.
 const SEAM_SEND_SIGNATURE: &str = "  Future<({int status, List<(String, String)> headers, \
      List<int> body, Stream<List<int>> bodyStream})> send(\n    \
      ({String method, String path, String query, List<(String, String)> headers, List<int> \
@@ -86,8 +80,7 @@ fn the_seam_carries_a_structural_request_record_in_and_response_record_out() {
     assert!(
         written.contains(SEAM_SEND_SIGNATURE),
         "the request and response are records, not named classes, so every service's transport \
-         reads the exact same anonymous shape — `bodyStream` and `parts` included, whether or \
-         not this particular service streams or uploads multipart. Got: {written}"
+         reads the exact same anonymous shape. Got: {written}"
     );
 }
 
@@ -509,10 +502,8 @@ fn every_service_s_transport_interface_carries_the_identical_send_signature() {
         let written = dart_http_client_of(source);
         assert!(
             written.contains(SEAM_SEND_SIGNATURE),
-            "{service}'s own `send` must read the exact same anonymous shape every other \
-             service's does — Dart records are compared structurally, so a shape that varied by \
-             service would make one hand-written implementation unable to satisfy two services' \
-             interfaces at once. Got: {written}"
+            "{service}'s `send` reads the same anonymous shape every other service's does. \
+             Got: {written}"
         );
     }
     let streamed = dart_http_client_of(DART_STREAM_HTTP_SERVICE);

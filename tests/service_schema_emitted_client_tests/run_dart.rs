@@ -15,10 +15,7 @@ use super::tests::{
 /// Names the runtime to run, for a machine that has one somewhere other than `PATH`.
 const RUNTIME_VAR: &str = "TIXSCHEMA_DART";
 
-/// Records the request it is handed and answers each operation's own declared status. Implements
-/// the seam's own full record shape — `bodyStream` and `parts` included — even though this
-/// service declares neither streaming nor multipart, exactly as fdz's fix requires every service's
-/// transport interface to read the identical anonymous shape.
+/// Records the request it is handed and answers each operation's own declared status.
 const DRIVER: &str = "
 class _Recorder implements ConversationClientServiceHttpTransport {
   final List<Map<String, String>> sent = <Map<String, String>>[];

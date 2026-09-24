@@ -46,21 +46,16 @@
 //! answering identically, since a multipart operation's own response is ordinary JSON, `header_out`
 //! included.
 //!
-//! # The seam carries `bodyStream` and `parts` on every service, not only where one is used
+//! # A streamed answer and a multipart request ride fields every service's seam carries
 //!
 //! `body = "stream"` answers a Dart record pairing a nullable `contentRange` with the body as a
 //! lazily-pulled `Stream<List<int>>` — `dart:async`'s own core type, not an HTTP package's, read
-//! back off the seam's *response* record's own `bodyStream` field. `body = "multipart"` builds its
-//! request from the seam's *request* record's own `parts` field — a list of name/value pairs,
-//! exactly mirroring the TypeScript client's own `parts` field. Both fields sit on every service's
-//! own record, whether or not that particular service declares a streamed or multipart operation:
-//! Dart records are compared structurally, so a `send` whose shape depended on what one service
-//! happened to declare would make two services' `{Service}HttpTransport` interfaces two different
-//! types, and no one implementation could satisfy both — exactly the promise this module's own
-//! class doc makes ("one hand-written implementation... satisfies every service's interface"). A
-//! service that never streams answers `bodyStream` with whatever `Stream<List<int>>` an
-//! implementation likes (nothing here ever reads it back); a service with no multipart operation
-//! always builds an empty `parts` list to send.
+//! back off the seam's *response* record's `bodyStream` field. `body = "multipart"` builds its
+//! request from the seam's *request* record's `parts` field — a list of name/value pairs, exactly
+//! mirroring the TypeScript client's own `parts` field. Both fields sit on every service's records,
+//! whatever it declares, so every service's `send` reads one shape and one implementation satisfies
+//! every service's interface: a service that never streams answers any stream, which nothing reads
+//! back, and one with no multipart operation sends an empty `parts`.
 
 use super::result::result_name;
 use crate::features::dart::dart_typename;
@@ -452,9 +447,7 @@ fn body_build_stmt(shape: &HttpShape) -> String {
 /// [`dart_wire_text`] a header or query value already renders through), then one entry per declared
 /// `part` binding (under its own declared name, its value the method's own extra argument, passed
 /// through untouched) — mirrors the TypeScript client's own `multipart_parts_build_stmt`. Every
-/// other body kind builds an empty `parts` instead, since the request literal always needs a value
-/// for the field now that it rides on every service's own request record (see the module doc's
-/// "The seam carries `bodyStream` and `parts` on every service" section).
+/// other body kind builds an empty `parts`, the field riding on every request record.
 fn multipart_parts_build_stmt(operation: &OperationDef, shape: &HttpShape) -> String {
     if !matches!(shape.body_kind, BodyKind::Multipart) {
         return "    const parts = <(String, dynamic)>[];\n".to_owned();
