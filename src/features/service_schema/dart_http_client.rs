@@ -82,6 +82,16 @@ use syn::Type;
 /// own `StreamedAnswer::Full`/`Partial`.
 const STREAMED_ANSWER_DART_TYPE: &str = "({String? contentRange, Stream<List<int>> body})";
 
+/// The response record every service's `send` answers with. `bodyStream` is on it whether or not
+/// the service streams, so one implementation satisfies every service's interface.
+const RESPONSE_RECORD_FIELDS: &str =
+    "{int status, List<(String, String)> headers, List<int> body, Stream<List<int>> bodyStream}";
+
+/// The request record every service's `send` takes. `parts` is on it whether or not the service
+/// declares multipart, and stays empty for every other body kind.
+const REQUEST_RECORD_FIELDS: &str = "{String method, String path, String query, \
+     List<(String, String)> headers, List<int> body, List<(String, dynamic)> parts}";
+
 pub fn emit(service: &ServiceDef) -> Vec<String> {
     let named = service.ident.to_string();
     let fn_prefix = RenameRule::CamelCase.apply_to_variant(&named);
@@ -105,33 +115,9 @@ fn has_one_way(service: &ServiceDef) -> bool {
 // The seam: an abstract, per-service interface over one structural request/response record pair.
 // ---------------------------------------------------------------------------------------------
 
-/// The response record `send` answers with: `status`, `headers`, `body` and a genuinely lazy
-/// `Stream<List<int>>` — always, on every service, so that every service's own `send` reads the
-/// exact same anonymous shape (see the module doc's "The seam carries `bodyStream` and `parts` on
-/// every service" section for why the field cannot be conditional). A real implementation can fill
-/// `bodyStream` a chunk at a time for a service that streams, and answer any unused stream for one
-/// that never reads it back — `body` keeps answering eagerly for every other operation (and may
-/// answer empty for the streamed one, exactly as the Rust client's own `IncomingResponse::body`
-/// does once its answer rode `bodyStream` instead).
-fn response_record_fields() -> String {
-    "{int status, List<(String, String)> headers, List<int> body, Stream<List<int>> bodyStream}"
-        .to_owned()
-}
-
-/// The request record `send` takes: `method`, `path`, `query`, `headers`, `body` and `parts` —
-/// always, on every service, for the identical reason [`response_record_fields`] always carries
-/// `bodyStream`. `parts` carries one name/value pair per part for a `body = "multipart"` operation
-/// — a scalar field's own text or a file part's own undecoded argument, passed through untouched —
-/// and stays empty for every other body kind.
-fn request_record_fields() -> String {
-    "{String method, String path, String query, List<(String, String)> headers, List<int> body, \
-     List<(String, dynamic)> parts}"
-        .to_owned()
-}
-
 fn transport_seam(named: &str) -> String {
-    let response = response_record_fields();
-    let request = request_record_fields();
+    let response = RESPONSE_RECORD_FIELDS;
+    let request = REQUEST_RECORD_FIELDS;
     format!(
         "/// What binds a `{named}` Dart client to a real HTTP stack.\n\
          ///\n\
@@ -515,7 +501,7 @@ fn send_expr(method_str: &str) -> String {
 }
 
 fn send_stmt_one_way(named: &str, fn_prefix: &str, wire: &str, method_str: &str) -> String {
-    let response = response_record_fields();
+    let response = RESPONSE_RECORD_FIELDS;
     format!(
         "    late final ({response}) response;\n    \
          try {{\n      \
@@ -528,7 +514,7 @@ fn send_stmt_one_way(named: &str, fn_prefix: &str, wire: &str, method_str: &str)
 }
 
 fn send_stmt_reply(result: &str, fn_prefix: &str, wire: &str, method_str: &str) -> String {
-    let response = response_record_fields();
+    let response = RESPONSE_RECORD_FIELDS;
     format!(
         "    late final ({response}) response;\n    \
          try {{\n      \
