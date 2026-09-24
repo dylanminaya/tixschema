@@ -15,7 +15,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ```
 
-A crate that declares any `pattern` also names `regex`, and one that declares a generic branded newtype with `minLength`/`maxLength`/`pattern` also names `typeid`, because the generated checks call them directly.
+A crate that declares any `pattern` also names `regex`, because the generated check calls it directly.
 
 ### Frontend Dependencies (Zod v4)
 

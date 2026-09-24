@@ -12267,7 +12267,42 @@ fn a_constrained_brand_over_a_wrapped_parameter_expands_against_the_wrapped_defa
     let rendered = tokens.to_string();
     assert!(!rendered.contains("compile_error"), "got: {rendered}");
     assert!(
-        rendered.contains(":: typeid :: of :: < Box < String > >"),
+        rendered.contains("type_identity :: < Box < String > >"),
         "got: {rendered}"
     );
+}
+
+/// A constrained generic brand's hook carries its own type identity and names no outside crate.
+#[cfg(all(
+    feature = "serde",
+    any(feature = "typescript", feature = "zod", feature = "jsonschema")
+))]
+#[test]
+fn a_constrained_generic_brand_defines_its_own_type_identity() {
+    let generic = expansion_with_args_over(
+        "minLength = 3, default_types(IdType = String)",
+        "
+        #[derive(Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct GenericSlug<IdType>(pub IdType);
+        ",
+    )
+    .to_string();
+    assert!(generic.contains("fn type_identity"), "got: {generic}");
+    assert!(
+        generic.contains("type_identity :: < String >"),
+        "got: {generic}"
+    );
+    assert!(!generic.contains("typeid ::"), "got: {generic}");
+
+    let concrete = expansion_with_args_over(
+        "minLength = 3",
+        "
+        #[derive(Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct ConcreteSlug(pub String);
+        ",
+    )
+    .to_string();
+    assert!(!concrete.contains("type_identity"), "got: {concrete}");
 }
