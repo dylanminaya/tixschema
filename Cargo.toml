@@ -53,9 +53,6 @@ futures = ">=0.3.33"
 # proc-macro crate with no runtime dependency of its own.
 axum = { version = "0.8.9", features = ["ws"] }
 tokio-tungstenite = "0.30.0"
-# A crate that expands a constrained generic brand names `typeid` in its own manifest, beside
-# `regex` for a `pattern`, because the generated serde read hook calls it.
-typeid = "1"
 
 # Transitive dep floors — pinned to fix known vulnerabilities:
 # - bytes >=1.11.1: RUSTSEC-2026-0007 (integer overflow in BytesMut::reserve)
