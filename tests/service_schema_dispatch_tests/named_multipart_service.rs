@@ -22,9 +22,9 @@ type Reached = (UploadMediaRequest, Vec<u8>);
 #[model_schema()]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct UploadMediaRequest {
-    pub mime: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
+    pub mime: String,
 }
 
 #[model_schema()]
