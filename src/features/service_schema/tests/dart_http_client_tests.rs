@@ -12,6 +12,19 @@ use super::{
 
 /// The body of one method, from its own doc comment through the closing brace of the method
 /// following it (or the end of the class) — mirrors `http_client_tests`'s own `method_body`.
+/// The exact `send` signature every service's own transport interface carries — `bodyStream` and
+/// `parts` included — whether or not that particular service ever streams or uploads multipart.
+/// This is the literal fdz regression: before this fix, a JSON-only service's own interface
+/// carried neither field, so a class implementing two services' interfaces at once failed `dart
+/// analyze` with `invalid_override` (two different anonymous record shapes for one method name),
+/// contradicting this very module's own class doc ("one hand-written implementation... satisfies
+/// every service's interface").
+const SEAM_SEND_SIGNATURE: &str = "  Future<({int status, List<(String, String)> headers, \
+     List<int> body, Stream<List<int>> bodyStream})> send(\n    \
+     ({String method, String path, String query, List<(String, String)> headers, List<int> \
+     body, List<(String, dynamic)> parts}) request,\n  \
+     );";
+
 fn method_body<'written>(written: &'written str, call: &str) -> &'written str {
     let start = written.find(&format!(" {call}("));
     assert!(start.is_some(), "no method named `{call}` in: {written}");
@@ -491,19 +504,6 @@ fn a_stream_operation_with_header_out_wraps_the_record_in_a_tuple() {
          Got: {method}"
     );
 }
-
-/// The exact `send` signature every service's own transport interface carries — `bodyStream` and
-/// `parts` included — whether or not that particular service ever streams or uploads multipart.
-/// This is the literal fdz regression: before this fix, a JSON-only service's own interface
-/// carried neither field, so a class implementing two services' interfaces at once failed `dart
-/// analyze` with `invalid_override` (two different anonymous record shapes for one method name),
-/// contradicting this very module's own class doc ("one hand-written implementation... satisfies
-/// every service's interface").
-const SEAM_SEND_SIGNATURE: &str = "  Future<({int status, List<(String, String)> headers, \
-     List<int> body, Stream<List<int>> bodyStream})> send(\n    \
-     ({String method, String path, String query, List<(String, String)> headers, List<int> \
-     body, List<(String, dynamic)> parts}) request,\n  \
-     );";
 
 #[test]
 fn every_service_s_transport_interface_carries_the_identical_send_signature() {
