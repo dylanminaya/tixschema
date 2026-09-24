@@ -7,14 +7,14 @@ use super::{
 };
 
 #[test]
-fn a_reply_operation_gets_a_sealed_base_and_four_final_subclasses() {
+fn a_reply_operation_gets_a_sealed_base_and_three_final_subclasses() {
     let written = dart_result_of(DART_SINGLE_PLACEHOLDER_HTTP_SERVICE);
     let joined = written.join("\n\n");
     assert!(
         joined.contains(
-            "/// What `window` answers: the success, the error the operation declared, a fault it \
-             never\n\
-             /// declared, or that the caller itself cancelled the call.\n\
+            "/// What `window` answers: the success, the error the operation declared, or a fault \
+             it never\n\
+             /// declared.\n\
              sealed class ConversationClientServiceWindowResult {\n  \
              const ConversationClientServiceWindowResult();\n}"
         ),
@@ -47,16 +47,6 @@ fn a_reply_operation_gets_a_sealed_base_and_four_final_subclasses() {
         ),
         "the fault arm carries the same fault fields every other Dart surface answers faults \
          through. Got: {joined}"
-    );
-    assert!(
-        joined.contains(
-            "final class ConversationClientServiceWindowResultCancelled extends \
-             ConversationClientServiceWindowResult {\n  \
-             const ConversationClientServiceWindowResultCancelled();\n}"
-        ),
-        "the cancelled arm carries nothing beyond its own type — a caller tells it apart from a \
-         `Fault` by matching on the pair, never by parsing a fault's own detail text. \
-         Got: {joined}"
     );
 }
 

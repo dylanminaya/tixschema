@@ -61,15 +61,6 @@
 //! service that never streams answers `bodyStream` with whatever `Stream<List<int>>` an
 //! implementation likes (nothing here ever reads it back); a service with no multipart operation
 //! always builds an empty `parts` list to send.
-//!
-//! # Cancellation is a marker exception, not a string to parse
-//!
-//! An adapter's own `send` can throw `{Service}HttpTransportCancelled` to say the caller itself
-//! cancelled the request — recognised by every method's own `catch` through `is`, never by parsing
-//! a fault's own `detail` text. A reply method answers its own result pair's `Cancelled` member,
-//! carrying nothing, in place of a `Fault`; a one-way method has no reply arm to carry either one
-//! through, so it rethrows the same marker instead of wrapping it into `{Service}HttpRefusal`.
-//! Every other exception a `send` throws still becomes a fault (or a refusal), exactly as before.
 
 use super::result::result_name;
 use crate::features::dart::dart_typename;
@@ -94,7 +85,7 @@ const STREAMED_ANSWER_DART_TYPE: &str = "({String? contentRange, Stream<List<int
 pub fn emit(service: &ServiceDef) -> Vec<String> {
     let named = service.ident.to_string();
     let fn_prefix = RenameRule::CamelCase.apply_to_variant(&named);
-    let mut published = vec![transport_seam(&named), transport_cancelled_class(&named)];
+    let mut published = vec![transport_seam(&named)];
     if has_one_way(service) {
         published.push(refusal_class(&named));
     }
@@ -152,18 +143,6 @@ fn transport_seam(named: &str) -> String {
          ({request}) request,\n  \
          );\n\
          }}"
-    )
-}
-
-/// Thrown by a `{named}HttpTransport` implementation to signal that the caller itself cancelled
-/// the request — never a network or server failure. Emitted here, rather than left for an adapter
-/// to invent its own ad hoc type, so every method's own `catch` below can recognise it by `is`;
-/// carries nothing, having nothing to say beyond its own type.
-fn transport_cancelled_class(named: &str) -> String {
-    format!(
-        "/// Thrown by a `{named}HttpTransport` implementation to say the caller itself cancelled\n\
-         /// the request — recognised by type, never by parsing a fault's own `detail` text.\n\
-         class {named}HttpTransportCancelled implements Exception {{}}"
     )
 }
 
@@ -315,7 +294,7 @@ fn method(named: &str, fn_prefix: &str, operation: &OperationDef) -> String {
         OperationOutcome::Reply { error, success } => {
             let result = result_name(named, operation).unwrap();
             (
-                send_stmt_reply(named, &result, fn_prefix, wire, method_str),
+                send_stmt_reply(&result, fn_prefix, wire, method_str),
                 reply_decode_stmt(&result, fn_prefix, &shape, wire, error, success),
             )
         }
@@ -535,10 +514,6 @@ fn send_expr(method_str: &str) -> String {
     )
 }
 
-/// A one-way method has no reply arm to carry either a fault or a cancellation through, so it
-/// keeps throwing: `{named}HttpRefusal` for anything else, exactly as before, but a
-/// `{named}HttpTransportCancelled` the adapter threw is rethrown as itself rather than wrapped —
-/// the caller catches it by type, never by parsing `{named}HttpRefusal`'s own fault detail.
 fn send_stmt_one_way(named: &str, fn_prefix: &str, wire: &str, method_str: &str) -> String {
     let response = response_record_fields();
     format!(
@@ -546,34 +521,19 @@ fn send_stmt_one_way(named: &str, fn_prefix: &str, wire: &str, method_str: &str)
          try {{\n      \
          response = {send};\n    \
          }} catch (uncarried) {{\n      \
-         if (uncarried is {named}HttpTransportCancelled) {{\n        \
-         rethrow;\n      \
-         }}\n      \
          throw {named}HttpRefusal(_{fn_prefix}HttpTransportFailure('{wire}', '$uncarried'));\n    \
          }}\n",
         send = send_expr(method_str),
     )
 }
 
-/// A reply method answers its own result pair's `Cancelled` member — carrying nothing, recognised
-/// by type like every other arm — where the transport threw `{named}HttpTransportCancelled`; every
-/// other exception still becomes a `Fault`, never rethrown, exactly as before.
-fn send_stmt_reply(
-    named: &str,
-    result: &str,
-    fn_prefix: &str,
-    wire: &str,
-    method_str: &str,
-) -> String {
+fn send_stmt_reply(result: &str, fn_prefix: &str, wire: &str, method_str: &str) -> String {
     let response = response_record_fields();
     format!(
         "    late final ({response}) response;\n    \
          try {{\n      \
          response = {send};\n    \
          }} catch (uncarried) {{\n      \
-         if (uncarried is {named}HttpTransportCancelled) {{\n        \
-         return {result}Cancelled();\n      \
-         }}\n      \
          return {result}Fault(_{fn_prefix}HttpTransportFailure('{wire}', '$uncarried'));\n    \
          }}\n",
         send = send_expr(method_str),

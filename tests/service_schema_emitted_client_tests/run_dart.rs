@@ -62,41 +62,6 @@ void main() async {
 }
 ";
 
-/// An adapter whose every `send` throws the marker exception this crate's own `dart_http_client`
-/// emits — never a network or server failure, but the caller cancelling. Answers `window` (a
-/// reply operation) and `purgeConversation` (one-way) each once, so the driver can report how
-/// each outcome told a cancellation apart from an ordinary fault.
-const CANCEL_DRIVER: &str = "
-class _CancellingTransport implements ConversationClientServiceHttpTransport {
-  @override
-  Future<({int status, List<(String, String)> headers, List<int> body, Stream<List<int>> bodyStream})> send(
-    ({String method, String path, String query, List<(String, String)> headers, List<int> body, List<(String, dynamic)> parts}) request,
-  ) async {
-    throw ConversationClientServiceHttpTransportCancelled();
-  }
-}
-
-void main() async {
-  final client = ConversationClientServiceHttpClient(_CancellingTransport());
-  final outcome = await client.window(WindowRequest(conversation_id: '652f1a3b4c5d6e7f8a9b0c1d'));
-  var oneWayRethrewTheMarker = false;
-  var oneWayThrewSomethingElse = false;
-  try {
-    await client.purgeConversation(ConversationId('652f1a3b4c5d6e7f8a9b0c1d'));
-  } on ConversationClientServiceHttpTransportCancelled {
-    oneWayRethrewTheMarker = true;
-  } catch (_) {
-    oneWayThrewSomethingElse = true;
-  }
-  print(jsonEncode(<String, dynamic>{
-    'replyIsCancelled': outcome is ConversationClientServiceWindowResultCancelled,
-    'replyIsFault': outcome is ConversationClientServiceWindowResultFault,
-    'oneWayRethrewTheMarker': oneWayRethrewTheMarker,
-    'oneWayThrewSomethingElse': oneWayThrewSomethingElse,
-  }));
-}
-";
-
 /// The generated classes the client calls, the client, and the driver.
 fn module() -> String {
     [
@@ -122,33 +87,6 @@ fn driven() -> Option<serde_json::Value> {
 /// The requests the driver recorded, or `None` where no runtime was reachable.
 fn sent() -> Option<Vec<serde_json::Value>> {
     driven().map(|written| written["sent"].as_array().unwrap().clone())
-}
-
-/// The generated classes the cancelling adapter calls, the client, and [`CANCEL_DRIVER`].
-fn cancel_module() -> String {
-    [
-        "import 'dart:convert';".to_owned(),
-        conversation_id_dart::dart_definition(),
-        window_request_dart::dart_definition(),
-        window_page_dart::dart_definition(),
-        window_error_dart::dart_definition(),
-        ConversationClientServiceSchema::dart_definition(),
-        ConversationClientServiceSchema::dart_http_client(),
-        CANCEL_DRIVER.to_owned(),
-    ]
-    .join("\n\n")
-}
-
-/// What [`CANCEL_DRIVER`] wrote, or `None` where no runtime was reachable.
-fn driven_cancel() -> Option<serde_json::Value> {
-    let wrote = ran(
-        "dart",
-        RUNTIME_VAR,
-        "dart",
-        "cancel_client.dart",
-        &cancel_module(),
-    )?;
-    Some(serde_json::from_str(wrote.trim()).unwrap())
 }
 
 #[test]
@@ -257,37 +195,5 @@ fn a_scalar_message_is_still_the_whole_segment() {
     assert_eq!(
         sent[2]["query"], "",
         "and no key is left over for a query. Got: {sent:#?}"
-    );
-}
-
-/// jzv, end to end: an adapter throwing the emitted marker exception answers the result pair's
-/// own `Cancelled` member for a reply operation — never the generic transport `Fault` a real
-/// network failure would also produce — and a one-way operation rethrows the same marker rather
-/// than wrapping it into `ConversationClientServiceHttpRefusal`.
-#[test]
-fn a_transport_cancellation_is_told_apart_from_a_fault_by_type_for_both_a_reply_and_a_one_way_call()
-{
-    let Some(written) = driven_cancel() else {
-        return;
-    };
-    assert_eq!(
-        written["replyIsCancelled"], true,
-        "a reply operation whose transport threw the marker answers the pair's own `Cancelled` \
-         member. Got: {written:#?}"
-    );
-    assert_eq!(
-        written["replyIsFault"], false,
-        "a cancellation must never also read as the generic transport fault a real network \
-         failure would produce. Got: {written:#?}"
-    );
-    assert_eq!(
-        written["oneWayRethrewTheMarker"], true,
-        "a one-way operation has no reply arm to carry a cancellation through, so it rethrows \
-         the same marker the caller catches by type. Got: {written:#?}"
-    );
-    assert_eq!(
-        written["oneWayThrewSomethingElse"], false,
-        "the one-way call must not wrap the cancellation into `ConversationClientServiceHttpRefusal` \
-         instead. Got: {written:#?}"
     );
 }
