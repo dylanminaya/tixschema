@@ -943,9 +943,10 @@ fn message_value(
     placeholder_names: &[String],
 ) -> (TokenStream, TokenStream) {
     let bodied = shape.method.carries_a_body();
+    let multipart = matches!(shape.body_kind, BodyKind::Multipart);
     match &operation.inputs {
         OperationInputs::Empty => {
-            if bodied && !matches!(shape.body_kind, BodyKind::Multipart) {
+            if bodied && !multipart {
                 (TokenStream::new(), from_body_expr(wire))
             } else {
                 // A multipart request's body is not itself the message - every field, if there
@@ -961,11 +962,74 @@ fn message_value(
             wire,
             named_type,
             bodied,
+            multipart,
             placeholder_idents,
             placeholder_names,
         ),
         OperationInputs::Generated(fields) => {
             message_value_for_generated(fields, shape, placeholder_names)
+        }
+    }
+}
+
+/// The runtime expression [`decode_expr`] would build if it had no declared type to pick a
+/// [`ScalarKind`] from - `true`/`false` text becomes a JSON boolean, anything that parses as a
+/// number becomes a JSON number, anything else stays a JSON string, the same three-way judgement
+/// this module's own documentation states, made without a type to choose the branch because the
+/// value belongs to an author's own `Named` struct this macro cannot see the fields of. Used for a
+/// `Named` message's own query- and multipart-part-bound fields, mirroring the client's own
+/// `named_query_build_stmts`, which walks the message serde already wrote for the identical reason.
+fn decode_expr_untyped(raw: &TokenStream) -> TokenStream {
+    quote! {
+        match #raw {
+            "true" => ::serde_json::Value::Bool(true),
+            "false" => ::serde_json::Value::Bool(false),
+            other => {
+                if let Ok(as_integer) = other.parse::<i64>() {
+                    ::serde_json::Value::from(as_integer)
+                } else if let Ok(as_float) = other.parse::<f64>() {
+                    match ::serde_json::Number::from_f64(as_float) {
+                        Some(number) => ::serde_json::Value::Number(number),
+                        None => ::serde_json::Value::String(other.to_owned()),
+                    }
+                } else {
+                    ::serde_json::Value::String(other.to_owned())
+                }
+            }
+        }
+    }
+}
+
+/// The statements that seed a bodyless `Named` message's own object from every key its query
+/// string carries except the ones a path placeholder already claims - this macro cannot name the
+/// struct's own fields, so, like the client's own `named_query_build_stmts`, it walks whatever the
+/// query string actually carries instead of a known field list.
+fn named_query_object_stmt(placeholder_names: &[String]) -> TokenStream {
+    let decode = decode_expr_untyped(&quote! { value.as_str() });
+    quote! {
+        let query_map = parse_query(request.query());
+        let mut object = ::serde_json::Map::new();
+        let path_bound: &[&str] = &[#(#placeholder_names),*];
+        for (key, value) in &query_map {
+            if path_bound.contains(&key.as_str()) {
+                continue;
+            }
+            object.insert(key.clone(), #decode);
+        }
+    }
+}
+
+/// The statements that seed a `body = "multipart"` `Named` message's own object from every part
+/// left in `parts` once a `part(...)` binding has already claimed its own file part: one text part
+/// per scalar field the struct declares, this macro again unable to name them ahead of time.
+fn named_multipart_object_stmt() -> TokenStream {
+    let decode = decode_expr_untyped(&quote! { text.as_str() });
+    quote! {
+        let mut object = ::serde_json::Map::new();
+        for (key, part) in parts {
+            if let IncomingPart::Text(text) = part {
+                object.insert(key, #decode);
+            }
         }
     }
 }
@@ -982,22 +1046,40 @@ fn from_body_expr(wire: &str) -> TokenStream {
 }
 
 /// A `OperationInputs::Named` message: the whole body where there is one and no placeholder binds
-/// it; the one placeholder's own coerced value where the named type is a recognised scalar and
-/// there is exactly one; otherwise an object keyed under each placeholder's own written spelling,
-/// merged onto the body where the method carries one — the opaque-struct case [`message_value`]'s
-/// own documentation covers.
+/// it; every part where the method is multipart and no placeholder binds one either; the one
+/// placeholder's own coerced value where the named type is a recognised scalar and there is
+/// exactly one; otherwise an object keyed under each placeholder's own written spelling, merged
+/// onto the body, the query string or the multipart parts, whichever the method carries — the
+/// opaque-struct case [`message_value`]'s own documentation covers. A field the path leaves unbound
+/// cannot be read by name (the struct is the author's own), so a bodyless method's object is seeded
+/// from every key its own query string carries and a multipart method's from every part left once
+/// `part(...)` bindings have claimed theirs, exactly as [`message_value_for_generated`]'s own
+/// fields are, just without a known type to decode each one from.
 fn message_value_for_named(
     wire: &str,
     named_type: &Type,
     bodied: bool,
+    multipart: bool,
     placeholder_idents: &[Ident],
     placeholder_names: &[String],
 ) -> (TokenStream, TokenStream) {
     if placeholder_idents.is_empty() {
-        return if bodied {
-            (TokenStream::new(), from_body_expr(wire))
-        } else {
+        if multipart {
+            return (
+                named_multipart_object_stmt(),
+                quote! { ::serde_json::Value::Object(object) },
+            );
+        }
+        if bodied {
+            return (TokenStream::new(), from_body_expr(wire));
+        }
+        return if is_scalar_named_type(named_type) {
             (TokenStream::new(), quote! { ::serde_json::Value::Null })
+        } else {
+            (
+                named_query_object_stmt(placeholder_names),
+                quote! { ::serde_json::Value::Object(object) },
+            )
         };
     }
     if placeholder_idents.len() == 1 && is_scalar_named_type(named_type) {
@@ -1007,7 +1089,13 @@ fn message_value_for_named(
         let decode = decode_expr(named_type, &quote! { #only.as_str() });
         return (TokenStream::new(), decode);
     }
-    let base = object_base(bodied);
+    let base = if multipart {
+        named_multipart_object_stmt()
+    } else if bodied {
+        object_base(true)
+    } else {
+        named_query_object_stmt(placeholder_names)
+    };
     let inserts: TokenStream = placeholder_names
         .iter()
         .zip(placeholder_idents)
@@ -1148,10 +1236,11 @@ fn answer_block(
         }
         OperationOutcome::Reply { error, success } => {
             let status_expr = error_status_expr(shape, error);
+            let error_arm = declared_error_arm(shape, &status_expr, &panic_fault);
             if matches!(shape.body_kind, BodyKind::Stream) {
-                stream_answer_block(module, shape, called, &status_expr, &panic_fault)
+                stream_answer_block(module, shape, called, &error_arm)
             } else if matches!(shape.body_kind, BodyKind::Bytes) {
-                bytes_answer_block(shape, called, &status_expr, &panic_fault, has_stream)
+                bytes_answer_block(shape, called, &error_arm, has_stream)
             } else if shape.header_out.is_empty() {
                 if is_unit_type(success) {
                     let empty_body = body_field(has_stream, &quote! { ::std::vec::Vec::new() });
@@ -1162,11 +1251,7 @@ fn answer_block(
                                 headers: ::std::vec::Vec::new(),
                                 #empty_body,
                             },
-                            Ok(Err(declared_error)) => {
-                                let status = #status_expr;
-                                return json_response(status, ::std::vec::Vec::new(), &declared_error);
-                            }
-                            Err(panicked) => { #panic_fault }
+                            #error_arm
                         }
                     }
                 } else {
@@ -1175,11 +1260,7 @@ fn answer_block(
                             Ok(Ok(value)) => {
                                 return json_response(#ok_status, ::std::vec::Vec::new(), &value);
                             }
-                            Ok(Err(declared_error)) => {
-                                let status = #status_expr;
-                                return json_response(status, ::std::vec::Vec::new(), &declared_error);
-                            }
-                            Err(panicked) => { #panic_fault }
+                            #error_arm
                         }
                     }
                 }
@@ -1192,11 +1273,7 @@ fn answer_block(
                             let headers: Vec<(String, String)> = ::std::vec![#header_entries];
                             return json_response(#ok_status, headers, &value);
                         }
-                        Ok(Err(declared_error)) => {
-                            let status = #status_expr;
-                            return json_response(status, ::std::vec::Vec::new(), &declared_error);
-                        }
-                        Err(panicked) => { #panic_fault }
+                        #error_arm
                     }
                 }
             }
@@ -1227,6 +1304,52 @@ fn header_out_entries(shape: &HttpShape, idents: &[Ident]) -> TokenStream {
         .collect()
 }
 
+/// Every declared-error arm the dispatcher answers through, shared by the JSON, bytes and stream
+/// paths alike: the mapped status, and, where the operation declares `error_header_out` entries,
+/// whichever of them the fired variant's own serialized value happens to carry. Read generically
+/// off `declared_error`'s own `serde_json::to_value` rather than matched by variant - the same
+/// reason [`crate::service_schema::transport::http_rest`]'s module documentation gives for reading
+/// a `Named` message's own fields off the query string instead of naming them: the author's own
+/// enum is not this macro's to match on. An operation declaring no `error_header_out` entry builds
+/// byte-identical tokens to before this existed - `::std::vec::Vec::new()`, nothing else evaluated.
+fn declared_error_arm(
+    shape: &HttpShape,
+    status_expr: &TokenStream,
+    panic_fault: &TokenStream,
+) -> TokenStream {
+    let headers_expr = if shape.error_header_out.is_empty() {
+        quote! { ::std::vec::Vec::new() }
+    } else {
+        let names = &shape.error_header_out;
+        quote! {
+            {
+                let mut headers: Vec<(String, String)> = ::std::vec::Vec::new();
+                if let Ok(::serde_json::Value::Object(fields)) =
+                    ::serde_json::to_value(&declared_error)
+                {
+                    #(
+                        match fields.get(#names) {
+                            Some(::serde_json::Value::String(text)) => {
+                                headers.push((#names.to_owned(), text.clone()));
+                            }
+                            Some(::serde_json::Value::Null) | None => {}
+                            Some(other) => headers.push((#names.to_owned(), other.to_string())),
+                        }
+                    )*
+                }
+                headers
+            }
+        }
+    };
+    quote! {
+        Ok(Err(declared_error)) => {
+            let status = #status_expr;
+            return json_response(status, #headers_expr, &declared_error);
+        }
+        Err(panicked) => { #panic_fault }
+    }
+}
+
 /// A `body = "bytes"` operation's own arm: with no declared `header_out`, `success` is
 /// `(Vec<u8>, String)`; with one declared, `parse.rs`'s own `is_bytes_success_shape` has already
 /// required `success` to carry one more element per entry after the content type, and each is
@@ -1234,19 +1357,11 @@ fn header_out_entries(shape: &HttpShape, idents: &[Ident]) -> TokenStream {
 fn bytes_answer_block(
     shape: &HttpShape,
     called: &TokenStream,
-    status_expr: &TokenStream,
-    panic_fault: &TokenStream,
+    error_arm: &TokenStream,
     has_stream: bool,
 ) -> TokenStream {
     let ok_status = shape.ok_status;
     let raw_body = body_field(has_stream, &quote! { body });
-    let error_arm = quote! {
-        Ok(Err(declared_error)) => {
-            let status = #status_expr;
-            return json_response(status, ::std::vec::Vec::new(), &declared_error);
-        }
-        Err(panicked) => { #panic_fault }
-    };
     if shape.header_out.is_empty() {
         quote! {
             match #called {
@@ -1293,17 +1408,9 @@ fn stream_answer_block(
     module: &Ident,
     shape: &HttpShape,
     called: &TokenStream,
-    status_expr: &TokenStream,
-    panic_fault: &TokenStream,
+    error_arm: &TokenStream,
 ) -> TokenStream {
     let ok_status = shape.ok_status;
-    let error_arm = quote! {
-        Ok(Err(declared_error)) => {
-            let status = #status_expr;
-            return json_response(status, ::std::vec::Vec::new(), &declared_error);
-        }
-        Err(panicked) => { #panic_fault }
-    };
     if shape.header_out.is_empty() {
         quote! {
             match #called {

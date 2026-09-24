@@ -82,10 +82,56 @@ mod multipart_service;
 #[path = "service_schema_dispatch_tests/multipart_http_rest_transport.rs"]
 mod multipart_http_rest_transport;
 
+/// `MediaService`, a bodyless `GET` over a `Named` single-struct message with a field the path
+/// leaves unbound - a service of its own so pangeo-a6j's query-binding fix is proven independent
+/// of `DocumentService`'s own macro-generated (`Generated`) query fields, which already worked.
+#[cfg(test)]
+#[macro_use]
+#[path = "service_schema_dispatch_tests/named_query_service.rs"]
+mod named_query_service;
+
+/// The `http_rest` dispatcher for `MediaService`, in a module of its own.
+#[cfg(all(test, feature = "serde"))]
+#[path = "service_schema_dispatch_tests/named_query_http_rest_transport.rs"]
+mod named_query_http_rest_transport;
+
+/// `MediaUploadService`, a `body = "multipart"` operation over a `Named` single-struct message
+/// (the repo's own established convention for a request carrying more than one scalar field) - a
+/// service of its own so pangeo-k5z's part-binding fix is proven independent of `UploadService`'s
+/// own bare-scalar-argument (`Generated`) shape, which already worked.
+#[cfg(test)]
+#[macro_use]
+#[path = "service_schema_dispatch_tests/named_multipart_service.rs"]
+mod named_multipart_service;
+
+/// The `http_rest` dispatcher for `MediaUploadService`, in a module of its own.
+#[cfg(all(test, feature = "serde"))]
+#[path = "service_schema_dispatch_tests/named_multipart_http_rest_transport.rs"]
+mod named_multipart_http_rest_transport;
+
+/// `RangeService`, a declared error carrying a response header via `error_header_out` - a service
+/// of its own so pangeo-ufr's fix is proven independent of `DocumentService`'s own declared errors,
+/// none of which carry a response header today.
+#[cfg(test)]
+#[macro_use]
+#[path = "service_schema_dispatch_tests/error_header_service.rs"]
+mod error_header_service;
+
+/// The `http_rest` dispatcher for `RangeService`, in a module of its own.
+#[cfg(all(test, feature = "serde"))]
+#[path = "service_schema_dispatch_tests/error_header_http_rest_transport.rs"]
+mod error_header_http_rest_transport;
+
 // A transport's dispatcher reaches what the service declared through `$crate`, which is this
 // binary's root: a service written in a submodule is named here for the expansion to resolve.
 #[cfg(all(test, feature = "serde"))]
+use error_header_service::{RangeService, range_service_schema};
+#[cfg(all(test, feature = "serde"))]
 use multipart_service::{UploadService, upload_service_schema};
+#[cfg(all(test, feature = "serde"))]
+use named_multipart_service::{MediaUploadService, media_upload_service_schema};
+#[cfg(all(test, feature = "serde"))]
+use named_query_service::{MediaService, media_service_schema};
 #[cfg(all(test, feature = "serde"))]
 use stream_service::{ContentService, content_service_schema};
 #[cfg(all(

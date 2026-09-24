@@ -905,6 +905,17 @@ const SWIFT_HEADER_VEC_OF_OPTIONS_SERVICE: &str = "
     }
 ";
 
+/// A reply operation whose declared success is `()` — nothing rides in the `Ok` arm. `()` is an
+/// empty tuple, so the ordinary tuple rendering `result_type` otherwise falls back to would publish
+/// `value: []`, which `success_decode_block`'s own `is_unit_type` runtime arm (see
+/// `http_client_tests.rs`, `getVersion`'s sibling unit-success operations) never actually returns.
+#[cfg(feature = "typescript")]
+const UNIT_SUCCESS_RESULT_SERVICE: &str = "
+    pub trait MarkerService<Ctx> {
+        async fn mark_read(&self, ctx: &Ctx, req: MarkReadRequest) -> Result<(), MarkError>;
+    }
+";
+
 #[cfg(feature = "swift")]
 fn swift_ws_client_of(source: &str) -> String {
     swift_ws_client::emit(&parsed(source)).join("\n\n")
@@ -1090,6 +1101,26 @@ fn the_published_fault_is_the_asked_for_fields_under_a_brand_the_bundle_exports_
             && readme.contains("declare const usageServiceFaultSeal: unique symbol;")
             && readme.contains("`built as UsageServiceFault` compiles"),
         "the README no longer says what the seal is, or that a type assertion still gets past it"
+    );
+}
+
+#[cfg(feature = "typescript")]
+#[test]
+fn a_unit_success_result_agrees_with_the_client_s_own_runtime_value() {
+    let published = result::emit(&parsed(UNIT_SUCCESS_RESULT_SERVICE));
+    let found = published
+        .iter()
+        .find(|ts| ts.contains("export type MarkerServiceMarkReadResult ="));
+    assert!(found.is_some(), "got: {published:?}");
+    let result = found.unwrap();
+    assert!(
+        result.contains("| { ok: true; value: undefined }"),
+        "got: {result}"
+    );
+    assert!(
+        !result.contains("value: []"),
+        "a `()` success used to publish as the empty-tuple type `[]`, disagreeing with the \
+         client's own 204 branch, which answers `value: undefined`. Got: {result}"
     );
 }
 

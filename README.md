@@ -2033,11 +2033,11 @@ pub trait DocumentService<Ctx> {
 }
 ```
 
-`method` is one of `"GET"`, `"POST"`, `"PUT"`, `"DELETE"`, `"PATCH"`; `path` is a template walked left to right, `{field}` placeholders included; `ok_status` is the success status (default 200, or 204 where the reply carries nothing -- see below); `error_status(Variant = code, ...)` maps the operation's own declared error variants to the statuses they answer at; `header_in`/`header_out` bind request and response headers (covered on its own below); `body` picks the body kind (`"json"`, the default; `"bytes"`; `"multipart"`; or `"stream"` -- covered on its own below); and `part("name" = parameter)` claims one multipart file part, only meaningful under `body = "multipart"`. Writing an argument this grammar does not recognise is refused naming the arguments it does:
+`method` is one of `"GET"`, `"POST"`, `"PUT"`, `"DELETE"`, `"PATCH"`; `path` is a template walked left to right, `{field}` placeholders included; `ok_status` is the success status (default 200, or 204 where the reply carries nothing -- see below); `error_status(Variant = code, ...)` maps the operation's own declared error variants to the statuses they answer at; `header_in`/`header_out` bind request and response headers (covered on its own below); `error_header_out` binds a declared error's own field to a response header (covered on its own below too); `body` picks the body kind (`"json"`, the default; `"bytes"`; `"multipart"`; or `"stream"` -- covered on its own below); and `part("name" = parameter)` claims one multipart file part, only meaningful under `body = "multipart"`. Writing an argument this grammar does not recognise is refused naming the arguments it does:
 
 ```text
 service_schema: unknown `http` argument
-       the arguments are `method`, `path`, `ok_status`, `error_status`, `header_in`, `header_out`, `part` and `body`
+       the arguments are `method`, `path`, `ok_status`, `error_status`, `header_in`, `header_out`, `error_header_out`, `part` and `body`
 ```
 
 **An operation naming no `http(...)` group at all** still gets one, defaulted rather than left unhandled: `POST /{wire-name}`, the same `ok_status` default every annotated operation gets (200, or 204 for nothing to serialize), no header bindings, and every declared error answered at one fixed status, `422`, rather than a per-variant table -- there being no annotation to read one from. So an internal service pays no attribute cost and still answers real HTTP:
@@ -2077,6 +2077,33 @@ service_schema: operation `get_widget` binds header "range" to a parameter named
 service_schema: operation `get_widget` returns a tuple success type and declares no `header_out`
               name what each element after the first is with `header_out("name")`, or return the type directly
 ```
+
+**`error_header_out("name")` puts a declared error's own field on the response, the one thing `header_out` cannot reach at all -- it names a success value's tuple element, and a declared error is not one.** A declared error is the author's own enum, and different variants can carry entirely different fields (a `416` wants `Content-Range`, a `429` wants `Retry-After`), so `error_header_out` names no tuple arity to check against: at answer time the dispatcher reads the fired variant's own serialized value and writes the named field out as a header wherever that variant happens to carry one, leaving it off the response wherever it does not. `#[serde(rename = "...")]` on the field is how an author makes its wire key match the header name declared here -- the same "the author's own type must expose the wire shape this macro reads" rule every other `http_rest` binding already lives by. Declaring it on a `one_way` operation is refused, there being no error to read a header off:
+
+```rust,ignore
+#[model_schema()]
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "errorCode")]
+pub enum DownloadError {
+    #[serde(rename = "not-found")]
+    NotFound,
+    #[serde(rename = "range-not-satisfiable")]
+    RangeNotSatisfiable {
+        #[serde(rename = "content-range")]
+        content_range: String,
+    },
+}
+
+#[service_schema_op(http(
+    method = "GET",
+    path = "/media/{sha256}",
+    error_status(NotFound = 404, RangeNotSatisfiable = 416),
+    error_header_out("content-range"),
+))]
+async fn download(&self, ctx: &Ctx, sha256: String) -> Result<MediaDescriptor, DownloadError>;
+```
+
+A `416` from `RangeNotSatisfiable` answers with `Content-Range: bytes */<size>` set from `content_range`; a `404` from `NotFound` answers with no such header at all, since that variant carries no field under that name. An operation declaring no `error_header_out` entry answers exactly as before -- the default reaches for nothing new.
 
 **Statuses.** `ok_status` and `error_status` are owner-chosen, exactly as `amqp_rpc`'s own message contract stays HTTP-free -- neither lives on a type, only on the operation. `error_status`'s completeness against the operation's own declared error type is checked unconditionally, by a `match` over exactly the declared arms and no wildcard: a variant the table leaves out is refused with rustc's own exhaustiveness check, naming it, and the refusal is spanned on the trait's own `#[service_schema]` attribute rather than invented by this crate:
 

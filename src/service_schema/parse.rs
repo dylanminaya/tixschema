@@ -61,7 +61,7 @@ const UNKNOWN_DIRECTIVE_MESSAGE: &str = concat!(
 const UNKNOWN_HTTP_ARGUMENT_MESSAGE: &str = concat!(
     "service_schema: unknown `http` argument\n",
     "       the arguments are `method`, `path`, `ok_status`, `error_status`, `header_in`, \
-     `header_out`, `part` and `body`"
+     `header_out`, `error_header_out`, `part` and `body`"
 );
 
 const BYTES_BODY_SUCCESS_SHAPE_MESSAGE: &str = concat!(
@@ -218,6 +218,13 @@ pub struct HttpBinding {
     /// How the body is carried: `Json` (the default), `Bytes` (`body = "bytes"`) or `Stream`
     /// (`body = "stream"`), each checked against the signature by [`build_http_binding`].
     pub body_kind: BodyKind,
+    /// One entry per bare `error_header_out("name")`. Unlike `header_out`, this names no tuple
+    /// element and requires no arity: a declared error is the author's own enum, whichever
+    /// variant fired carrying whatever fields it carries, so each name here is read generically
+    /// off the fired variant's own serialized value and is simply left off the response wherever
+    /// that variant carries no field under it — `#[serde(rename = "...")]` on the field is how an
+    /// author makes its wire key match the header name declared here.
+    pub error_header_out: Vec<String>,
     /// One entry per declared `error_status(Variant = code)`, in declaration order. Each variant
     /// keeps its own span from the attribute, so a misspelling is rustc's own "no variant" error
     /// rather than one this crate wrote, and a variant the mapping left out is rustc's own
@@ -373,6 +380,7 @@ pub enum ScalarKind {
 /// place.
 pub struct HttpShape {
     pub body_kind: BodyKind,
+    pub error_header_out: Vec<String>,
     pub error_status: Vec<(Ident, u16)>,
     pub header_in: Vec<HeaderIn>,
     pub header_out: Vec<String>,
@@ -387,6 +395,7 @@ impl HttpShape {
         operation.http.as_ref().map_or_else(
             || Self {
                 body_kind: BodyKind::Json,
+                error_header_out: Vec::new(),
                 error_status: Vec::new(),
                 header_in: Vec::new(),
                 header_out: Vec::new(),
@@ -397,6 +406,7 @@ impl HttpShape {
             },
             |binding| Self {
                 body_kind: binding.body_kind,
+                error_header_out: binding.error_header_out.clone(),
                 error_status: binding.error_status.clone(),
                 header_in: binding.header_in.clone(),
                 header_out: binding.header_out.clone(),
@@ -435,6 +445,7 @@ impl HttpShape {
 /// What `http(...)` said, before it is checked against the operation's signature and outcome.
 struct RawHttp {
     body: Option<(BodyKind, LitStr)>,
+    error_header_out: Vec<LitStr>,
     error_status: Vec<(Ident, u16)>,
     header_in: Vec<(LitStr, Ident)>,
     header_out: Vec<LitStr>,
@@ -707,6 +718,7 @@ fn read_http_directive(meta: &ParseNestedMeta<'_>) -> Result<RawHttp, syn::Error
     let mut error_status: Vec<(Ident, u16)> = Vec::new();
     let mut header_in: Vec<(LitStr, Ident)> = Vec::new();
     let mut header_out: Vec<LitStr> = Vec::new();
+    let mut error_header_out: Vec<LitStr> = Vec::new();
     let mut multipart_parts: Vec<(LitStr, Ident)> = Vec::new();
 
     meta.parse_nested_meta(|inner| {
@@ -743,6 +755,10 @@ fn read_http_directive(meta: &ParseNestedMeta<'_>) -> Result<RawHttp, syn::Error
             header_out.push(parse_header_out_arg(&inner)?);
             return Ok(());
         }
+        if inner.path.is_ident("error_header_out") {
+            error_header_out.push(parse_header_out_arg(&inner)?);
+            return Ok(());
+        }
         Err(inner.error(UNKNOWN_HTTP_ARGUMENT_MESSAGE))
     })?;
 
@@ -753,6 +769,7 @@ fn read_http_directive(meta: &ParseNestedMeta<'_>) -> Result<RawHttp, syn::Error
 
     Ok(RawHttp {
         body: body_written,
+        error_header_out,
         error_status,
         header_in,
         header_out,
@@ -1763,6 +1780,10 @@ fn build_http_binding(
         refusals = Some(combined(refusals.take(), refusal));
     }
 
+    if let Some(refusal) = error_header_out_refusals(operation_ident, &raw, outcome) {
+        refusals = Some(combined(refusals.take(), refusal));
+    }
+
     if let Some(refusal) = body_kind_refusals(&raw, outcome) {
         refusals = Some(combined(refusals.take(), refusal));
     }
@@ -1779,6 +1800,11 @@ fn build_http_binding(
 
     Ok(HttpBinding {
         body_kind: raw.body.as_ref().map_or(BodyKind::Json, |(kind, _)| *kind),
+        error_header_out: raw
+            .error_header_out
+            .into_iter()
+            .map(|name| name.value())
+            .collect(),
         error_status: raw.error_status,
         // A parameter absent from `existing` was already refused above, and `refusals` returned
         // `Err` before this point ran — `filter_map` drops it here rather than asserting an
@@ -2256,6 +2282,33 @@ fn header_out_on_one_way_message(operation: &Ident) -> String {
         "service_schema: operation `{operation}` is marked `one_way` and declares `header_out`\n       \
          a one-way operation produces no reply to carry a header in"
     )
+}
+
+fn error_header_out_on_one_way_message(operation: &Ident) -> String {
+    format!(
+        "service_schema: operation `{operation}` is marked `one_way` and declares \
+         `error_header_out`\n       \
+         a one-way operation declares no error to read a header off"
+    )
+}
+
+/// A one-way operation declares no error at all, so there is nothing `error_header_out` could ever
+/// read a header off. Unlike `header_out`, a reply operation needs no arity check here: the header
+/// is read generically off whichever error variant fired rather than off a fixed tuple position.
+fn error_header_out_refusals(
+    operation_ident: &Ident,
+    raw: &RawHttp,
+    outcome: &OperationOutcome,
+) -> Option<syn::Error> {
+    if matches!(outcome, OperationOutcome::OneWay) {
+        return raw.error_header_out.first().map(|first| {
+            syn::Error::new(
+                first.span(),
+                error_header_out_on_one_way_message(operation_ident),
+            )
+        });
+    }
+    None
 }
 
 /// A tuple success type is explained only by `header_out`: as many entries as elements after the
