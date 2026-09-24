@@ -108,7 +108,18 @@ jobs:
         TEXT: ${{ steps.test-extensive.outcome }}
         AUDIT: ${{ steps.audit.outcome }}
       run: |
-        # Validate repository to prevent forks from sending notifications
+        # Validate repository to prevent forks from sending notifications.
+        # `github.repository` is the BASE repository on a pull request, so it
+        # reads as this repo even when the branch lives on a fork — the check
+        # below never fires for an outside contribution. The webhook itself is
+        # the reliable signal: GitHub withholds secrets from a pull request
+        # opened from a fork, so an empty one means exactly "not ours to send".
+        # Without this, every fork pull request ends red on a `curl` that was
+        # handed no URL, however green its build and tests were.
+        if [[ -z "$DISCORD_WEBHOOK" ]]; then
+          echo "⏭️ Skipping Discord notification (no webhook available: fork pull request)"
+          exit 0
+        fi
         if [[ "$REPO" != "eburgos/tixschema" && "$REPO" != "tixena/tixschema" ]]; then
           echo "⏭️ Skipping Discord notification (repository is $REPO, a fork)"
           exit 0
