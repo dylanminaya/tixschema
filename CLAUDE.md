@@ -652,10 +652,11 @@ bounds through the same `allOf` a named inner is narrowed through — never the 
 parameter with no default at all would describe as.
 
 The serde read holds the same line: `build_branded_validation`'s generic `deserialize_value` hook
-compares `typeid::of::<T>()` against the inner type with each parameter's declared default
+compares `type_identity::<T>()` against the inner type with each parameter's declared default
 substituted in (`substitute_declared_defaults`, reading `declared_default_syn_type`), and only
 runs the checks when they are equal, so the read reaches the same one filling `$SchemaDefault` and
-`validate()` do.
+`validate()` do. `type_identity` is emitted into the schema module by `embedded_type_identity`, a
+copy of `typeid::of` (see `THIRD-PARTY-NOTICES`), so a consumer adds no dependency for it.
 
 ### Adding Examples to Types
 

@@ -181,15 +181,32 @@ jobs:
           }')
 
         echo "Sending Discord notification..."
+        echo "Event: $EVENT_NAME | Branch: $BRANCH | Commit: $SHORT_SHA | Author: $AUTHOR"
         echo "Job Status: $JOB_STATUS"
         echo "Failed Step: $FAILED_STEP"
+        echo "Title: $TITLE"
+        echo "Payload size: ${#PAYLOAD} bytes"
 
-        RESPONSE=$(curl -s -w "HTTPSTATUS:%{http_code}" -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_WEBHOOK")
+        if [[ -z "$DISCORD_WEBHOOK" ]]; then
+          echo "❌ DISCORD_WEBHOOK is empty or not available to this run; nothing was sent"
+          exit 0
+        fi
+
+        # The webhook's own name and channel, read back without its token.
+        WEBHOOK_INFO=$(curl -s "$DISCORD_WEBHOOK" | jq -c '{webhook_name: .name, webhook_id: .id, channel_id: .channel_id, guild_id: .guild_id}' 2>/dev/null || true)
+        echo "Webhook: ${WEBHOOK_INFO:-(could not read the webhook details)}"
+
+        # wait=true makes Discord answer with the created message instead of an empty 204.
+        SEP='?'; [[ "$DISCORD_WEBHOOK" == *\?* ]] && SEP='&'
+        RESPONSE=$(curl -s -w "HTTPSTATUS:%{http_code}" -H "Content-Type: application/json" -d "$PAYLOAD" "${DISCORD_WEBHOOK}${SEP}wait=true")
         HTTP_STATUS=$(echo "$RESPONSE" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+        BODY=$(echo "$RESPONSE" | sed -e 's/HTTPSTATUS:[0-9]*$//')
 
         if [[ $HTTP_STATUS -eq 200 || $HTTP_STATUS -eq 204 ]]; then
           echo "✅ Discord notification sent successfully (HTTP $HTTP_STATUS)"
+          MESSAGE_INFO=$(echo "$BODY" | jq -c '{message_id: .id, channel_id: .channel_id, timestamp: .timestamp, embeds: (.embeds | length)}' 2>/dev/null || true)
+          echo "Message: ${MESSAGE_INFO:-(no message body returned)}"
         else
           echo "❌ Discord notification failed (HTTP $HTTP_STATUS)"
-          echo "Response: $RESPONSE"
+          echo "Response: $BODY"
         fi

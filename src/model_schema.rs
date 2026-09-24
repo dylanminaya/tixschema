@@ -4614,7 +4614,10 @@ fn build_branded_validation(
         let deserialize_fn = if is_generic {
             let default_ty =
                 substitute_declared_defaults(inner_ty, generic_params, &args.default_types);
+            let type_identity = embedded_type_identity();
             quote! {
+                #type_identity
+
                 pub fn deserialize_value<'de, D, T>(deserializer: D) -> Result<T, D::Error>
                 where
                     D: serde::Deserializer<'de>,
@@ -4622,7 +4625,7 @@ fn build_branded_validation(
                 {
                     use serde::Deserialize;
                     let v = T::deserialize(deserializer)?;
-                    if ::typeid::of::<T>() == ::typeid::of::<#default_ty>() {
+                    if type_identity::<T>() == type_identity::<#default_ty>() {
                         validate_value(#checked_v).map_err(#refusal)?;
                     }
                     Ok(v)
@@ -4648,6 +4651,39 @@ fn build_branded_validation(
             validate_fn,
         }
     })
+}
+
+// Adapted from `typeid::of` in the typeid crate by David Tolnay (https://github.com/dtolnay/typeid),
+// used under the MIT license; see THIRD-PARTY-NOTICES.
+#[cfg(all(
+    feature = "serde",
+    any(feature = "typescript", feature = "zod", feature = "jsonschema")
+))]
+fn embedded_type_identity() -> proc_macro2::TokenStream {
+    quote! {
+        fn type_identity<T: ?Sized>() -> ::core::any::TypeId {
+            trait NonStaticAny {
+                fn get_type_id(&self) -> ::core::any::TypeId
+                where
+                    Self: 'static;
+            }
+            impl<T: ?Sized> NonStaticAny for ::core::marker::PhantomData<T> {
+                fn get_type_id(&self) -> ::core::any::TypeId
+                where
+                    Self: 'static,
+                {
+                    ::core::any::TypeId::of::<T>()
+                }
+            }
+            let phantom_data = ::core::marker::PhantomData::<T>;
+            // Only the trait object's lifetime changes, and a TypeId never carries lifetimes.
+            NonStaticAny::get_type_id(unsafe {
+                ::core::mem::transmute::<&dyn NonStaticAny, &(dyn NonStaticAny + 'static)>(
+                    &phantom_data,
+                )
+            })
+        }
+    }
 }
 
 /// Every one of `parameters` found in `ty`, replaced by its `default_types` filling via
