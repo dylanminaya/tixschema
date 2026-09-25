@@ -46,14 +46,16 @@
 //! answering identically, since a multipart operation's own response is ordinary JSON, `header_out`
 //! included.
 //!
-//! # A streamed answer and a multipart request each add one field to the shared seam
+//! # A streamed answer and a multipart request ride fields every service's seam carries
 //!
 //! `body = "stream"` answers a Dart record pairing a nullable `contentRange` with the body as a
 //! lazily-pulled `Stream<List<int>>` — `dart:async`'s own core type, not an HTTP package's, read
-//! back off one more field the seam's *response* record carries only where a service declares a
-//! streamed operation. `body = "multipart"` builds its request from one more field the seam's
-//! *request* record carries only where a service declares one — a `parts` list of name/value pairs,
-//! exactly mirroring the TypeScript client's own `parts` field.
+//! back off the seam's *response* record's `bodyStream` field. `body = "multipart"` builds its
+//! request from the seam's *request* record's `parts` field — a list of name/value pairs, exactly
+//! mirroring the TypeScript client's own `parts` field. Both fields sit on every service's records,
+//! whatever it declares, so every service's `send` reads one shape and one implementation satisfies
+//! every service's interface: a service that never streams answers any stream, which nothing reads
+//! back, and one with no multipart operation sends an empty `parts`.
 
 use super::result::result_name;
 use crate::features::dart::dart_typename;
@@ -62,7 +64,7 @@ use crate::rename_rule::RenameRule;
 use crate::service_schema::parse::{
     BodyKind, DEFAULT_BINDING_ERROR_STATUS, HttpShape, OperationDef, OperationInputs,
     OperationOutcome, PathSegment, ServiceDef, is_scalar_named_type, is_unit_type, option_inner,
-    service_declares_a_stream, service_declares_multipart, tuple_elements, vec_inner, wire_key,
+    tuple_elements, vec_inner, wire_key,
 };
 use crate::service_schema::support::fault_fields_typescript_name;
 use core::fmt::Write as _;
@@ -75,16 +77,24 @@ use syn::Type;
 /// own `StreamedAnswer::Full`/`Partial`.
 const STREAMED_ANSWER_DART_TYPE: &str = "({String? contentRange, Stream<List<int>> body})";
 
+/// The response record every service's `send` answers with. `bodyStream` is on it whether or not
+/// the service streams, so one implementation satisfies every service's interface.
+const RESPONSE_RECORD_FIELDS: &str =
+    "{int status, List<(String, String)> headers, List<int> body, Stream<List<int>> bodyStream}";
+
+/// The request record every service's `send` takes. `parts` is on it whether or not the service
+/// declares multipart, and stays empty for every other body kind.
+const REQUEST_RECORD_FIELDS: &str = "{String method, String path, String query, \
+     List<(String, String)> headers, List<int> body, List<(String, dynamic)> parts}";
+
 pub fn emit(service: &ServiceDef) -> Vec<String> {
     let named = service.ident.to_string();
     let fn_prefix = RenameRule::CamelCase.apply_to_variant(&named);
-    let has_stream = service_declares_a_stream(service);
-    let has_multipart = service_declares_multipart(service);
-    let mut published = vec![transport_seam(&named, has_stream, has_multipart)];
+    let mut published = vec![transport_seam(&named)];
     if has_one_way(service) {
         published.push(refusal_class(&named));
     }
-    published.push(client_class(service, has_stream, has_multipart));
+    published.push(client_class(service));
     published.extend(fault_helpers(service, &named, &fn_prefix));
     published
 }
@@ -100,38 +110,9 @@ fn has_one_way(service: &ServiceDef) -> bool {
 // The seam: an abstract, per-service interface over one structural request/response record pair.
 // ---------------------------------------------------------------------------------------------
 
-/// The response record `send` answers with: `status`, `headers` and `body` always; a genuinely
-/// lazy `Stream<List<int>>` too, for a service that declares `body = "stream"` — a real
-/// implementation can fill it a chunk at a time rather than buffering the whole answer first,
-/// while `body` keeps answering eagerly for every other operation (and may answer empty for the
-/// streamed one, exactly as the Rust client's own `IncomingResponse::body` does once its answer
-/// rode `bodyStream` instead).
-fn response_record_fields(has_stream: bool) -> String {
-    let stream_field = if has_stream {
-        ", Stream<List<int>> bodyStream"
-    } else {
-        ""
-    };
-    format!("{{int status, List<(String, String)> headers, List<int> body{stream_field}}}")
-}
-
-/// The request record `send` takes: `method`, `path`, `query`, `headers` and `body` always;
-/// `parts` too, for a service that declares `body = "multipart"` — one name/value pair per part, a
-/// scalar field's own text or a file part's own undecoded argument, passed through untouched.
-fn request_record_fields(has_multipart: bool) -> String {
-    let parts_field = if has_multipart {
-        ", List<(String, dynamic)> parts"
-    } else {
-        ""
-    };
-    format!(
-        "{{String method, String path, String query, List<(String, String)> headers, List<int> body{parts_field}}}"
-    )
-}
-
-fn transport_seam(named: &str, has_stream: bool, has_multipart: bool) -> String {
-    let response = response_record_fields(has_stream);
-    let request = request_record_fields(has_multipart);
+fn transport_seam(named: &str) -> String {
+    let response = RESPONSE_RECORD_FIELDS;
+    let request = REQUEST_RECORD_FIELDS;
     format!(
         "/// What binds a `{named}` Dart client to a real HTTP stack.\n\
          ///\n\
@@ -170,13 +151,13 @@ fn refusal_class(named: &str) -> String {
 // The client: one class, one constructor, one method per operation.
 // ---------------------------------------------------------------------------------------------
 
-fn client_class(service: &ServiceDef, has_stream: bool, has_multipart: bool) -> String {
+fn client_class(service: &ServiceDef) -> String {
     let named = service.ident.to_string();
     let fn_prefix = RenameRule::CamelCase.apply_to_variant(&named);
     let methods = service
         .operations
         .iter()
-        .map(|operation| method(&named, &fn_prefix, operation, has_stream, has_multipart))
+        .map(|operation| method(&named, &fn_prefix, operation))
         .collect::<Vec<_>>()
         .join("\n\n");
     format!(
@@ -274,13 +255,7 @@ pub(super) fn carries_no_value(operation: &OperationDef, shape: &HttpShape) -> b
         && is_unit_type(success)
 }
 
-fn method(
-    named: &str,
-    fn_prefix: &str,
-    operation: &OperationDef,
-    has_stream: bool,
-    has_multipart: bool,
-) -> String {
+fn method(named: &str, fn_prefix: &str, operation: &OperationDef) -> String {
     let shape = HttpShape::of(operation);
     let wire = &operation.wire_name;
     let call = &operation.ts_name;
@@ -290,31 +265,17 @@ fn method(
     let query_build = query_build_stmt(operation, &shape);
     let headers_build = header_in_build_stmt(&shape);
     let body_build = body_build_stmt(&shape);
-    let parts_build = multipart_parts_build_stmt(operation, &shape, has_multipart);
+    let parts_build = multipart_parts_build_stmt(operation, &shape);
     let method_str = shape.method.name();
     let (send, decode) = match &operation.outcome {
         OperationOutcome::OneWay => (
-            send_stmt_one_way(
-                named,
-                fn_prefix,
-                wire,
-                method_str,
-                has_stream,
-                has_multipart,
-            ),
+            send_stmt_one_way(named, fn_prefix, wire, method_str),
             one_way_decode_stmt(named, fn_prefix, &shape, wire),
         ),
         OperationOutcome::Reply { error, success } => {
             let result = result_name(named, operation).unwrap();
             (
-                send_stmt_reply(
-                    &result,
-                    fn_prefix,
-                    wire,
-                    method_str,
-                    has_stream,
-                    has_multipart,
-                ),
+                send_stmt_reply(&result, fn_prefix, wire, method_str),
                 reply_decode_stmt(&result, fn_prefix, &shape, wire, error, success),
             )
         }
@@ -486,17 +447,8 @@ fn body_build_stmt(shape: &HttpShape) -> String {
 /// [`dart_wire_text`] a header or query value already renders through), then one entry per declared
 /// `part` binding (under its own declared name, its value the method's own extra argument, passed
 /// through untouched) — mirrors the TypeScript client's own `multipart_parts_build_stmt`. Every
-/// other body kind on a service that declares multipart still builds an empty `parts` so the
-/// request literal has a value for the field; a service with no multipart operation at all builds
-/// nothing.
-fn multipart_parts_build_stmt(
-    operation: &OperationDef,
-    shape: &HttpShape,
-    has_multipart: bool,
-) -> String {
-    if !has_multipart {
-        return String::new();
-    }
+/// other body kind builds an empty `parts`, the field riding on every request record.
+fn multipart_parts_build_stmt(operation: &OperationDef, shape: &HttpShape) -> String {
     if !matches!(shape.body_kind, BodyKind::Multipart) {
         return "    const parts = <(String, dynamic)>[];\n".to_owned();
     }
@@ -535,22 +487,14 @@ fn multipart_parts_build_stmt(
 // Sending, and decoding the answer by status.
 // ---------------------------------------------------------------------------------------------
 
-fn send_expr(method_str: &str, has_multipart: bool) -> String {
-    let parts_field = if has_multipart { ", parts: parts" } else { "" };
+fn send_expr(method_str: &str) -> String {
     format!(
-        "await _transport.send((method: '{method_str}', path: path, query: query, headers: headers, body: body{parts_field}))"
+        "await _transport.send((method: '{method_str}', path: path, query: query, headers: headers, body: body, parts: parts))"
     )
 }
 
-fn send_stmt_one_way(
-    named: &str,
-    fn_prefix: &str,
-    wire: &str,
-    method_str: &str,
-    has_stream: bool,
-    has_multipart: bool,
-) -> String {
-    let response = response_record_fields(has_stream);
+fn send_stmt_one_way(named: &str, fn_prefix: &str, wire: &str, method_str: &str) -> String {
+    let response = RESPONSE_RECORD_FIELDS;
     format!(
         "    late final ({response}) response;\n    \
          try {{\n      \
@@ -558,19 +502,12 @@ fn send_stmt_one_way(
          }} catch (uncarried) {{\n      \
          throw {named}HttpRefusal(_{fn_prefix}HttpTransportFailure('{wire}', '$uncarried'));\n    \
          }}\n",
-        send = send_expr(method_str, has_multipart),
+        send = send_expr(method_str),
     )
 }
 
-fn send_stmt_reply(
-    result: &str,
-    fn_prefix: &str,
-    wire: &str,
-    method_str: &str,
-    has_stream: bool,
-    has_multipart: bool,
-) -> String {
-    let response = response_record_fields(has_stream);
+fn send_stmt_reply(result: &str, fn_prefix: &str, wire: &str, method_str: &str) -> String {
+    let response = RESPONSE_RECORD_FIELDS;
     format!(
         "    late final ({response}) response;\n    \
          try {{\n      \
@@ -578,7 +515,7 @@ fn send_stmt_reply(
          }} catch (uncarried) {{\n      \
          return {result}Fault(_{fn_prefix}HttpTransportFailure('{wire}', '$uncarried'));\n    \
          }}\n",
-        send = send_expr(method_str, has_multipart),
+        send = send_expr(method_str),
     )
 }
 
