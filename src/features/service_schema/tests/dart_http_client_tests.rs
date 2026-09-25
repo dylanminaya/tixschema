@@ -10,6 +10,13 @@ use super::{
     dart_http_client_of,
 };
 
+/// The `send` signature every service's transport interface carries, whatever it declares.
+const SEAM_SEND_SIGNATURE: &str = "  Future<({int status, List<(String, String)> headers, \
+     List<int> body, Stream<List<int>> bodyStream})> send(\n    \
+     ({String method, String path, String query, List<(String, String)> headers, List<int> \
+     body, List<(String, dynamic)> parts}) request,\n  \
+     );";
+
 /// The body of one method, from its own doc comment through the closing brace of the method
 /// following it (or the end of the class) — mirrors `http_client_tests`'s own `method_body`.
 fn method_body<'written>(written: &'written str, call: &str) -> &'written str {
@@ -71,11 +78,7 @@ fn exactly_one_seam_type_is_emitted_and_it_names_no_http_package() {
 fn the_seam_carries_a_structural_request_record_in_and_response_record_out() {
     let written = dart_http_client_of(DART_HTTP_SERVICE);
     assert!(
-        written.contains(
-            "Future<({int status, List<(String, String)> headers, List<int> body})> send(\n    \
-             ({String method, String path, String query, List<(String, String)> headers, List<int> body}) request,\n  \
-             );"
-        ),
+        written.contains(SEAM_SEND_SIGNATURE),
         "the request and response are records, not named classes, so every service's transport \
          reads the exact same anonymous shape. Got: {written}"
     );
@@ -490,21 +493,20 @@ fn a_stream_operation_with_header_out_wraps_the_record_in_a_tuple() {
 }
 
 #[test]
-fn the_seam_carries_a_lazy_body_stream_only_where_a_service_declares_one() {
-    let plain = dart_http_client_of(DART_HTTP_SERVICE);
-    assert!(
-        !plain.contains("bodyStream"),
-        "a service with no streamed operation carries no `bodyStream` field. Got: {plain}"
-    );
+fn every_service_s_transport_interface_carries_the_identical_send_signature() {
+    for (source, service) in [
+        (DART_HTTP_SERVICE, "a JSON-only service"),
+        (DART_STREAM_HTTP_SERVICE, "a streamed service"),
+        (DART_MULTIPART_HTTP_SERVICE, "a multipart service"),
+    ] {
+        let written = dart_http_client_of(source);
+        assert!(
+            written.contains(SEAM_SEND_SIGNATURE),
+            "{service}'s `send` reads the same anonymous shape every other service's does. \
+             Got: {written}"
+        );
+    }
     let streamed = dart_http_client_of(DART_STREAM_HTTP_SERVICE);
-    assert!(
-        streamed.contains(
-            "Future<({int status, List<(String, String)> headers, List<int> body, \
-             Stream<List<int>> bodyStream})> send("
-        ),
-        "a service with a streamed operation carries `bodyStream` on the seam's own response \
-         record, and no HTTP package is named to spell `Stream`. Got: {streamed}"
-    );
     for named in [
         "package:http",
         "package:dio",

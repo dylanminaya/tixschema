@@ -21,8 +21,8 @@ class _Recorder implements ConversationClientServiceHttpTransport {
   final List<Map<String, String>> sent = <Map<String, String>>[];
 
   @override
-  Future<({int status, List<(String, String)> headers, List<int> body})> send(
-    ({String method, String path, String query, List<(String, String)> headers, List<int> body}) request,
+  Future<({int status, List<(String, String)> headers, List<int> body, Stream<List<int>> bodyStream})> send(
+    ({String method, String path, String query, List<(String, String)> headers, List<int> body, List<(String, dynamic)> parts}) request,
   ) async {
     sent.add(<String, String>{
       'method': request.method,
@@ -30,12 +30,13 @@ class _Recorder implements ConversationClientServiceHttpTransport {
       'query': request.query,
     });
     if (request.method == 'DELETE') {
-      return (status: 204, headers: <(String, String)>[], body: <int>[]);
+      return (status: 204, headers: <(String, String)>[], body: <int>[], bodyStream: const Stream<List<int>>.empty());
     }
     return (
       status: 200,
       headers: <(String, String)>[],
       body: utf8.encode(jsonEncode(<String, dynamic>{'items': <String>[]})),
+      bodyStream: const Stream<List<int>>.empty(),
     );
   }
 }
